@@ -25,6 +25,7 @@
   <main class="stage">
     <div id="map" aria-label="地図"></div>
     <div class="stampbar" id="stampBar" role="toolbar" aria-label="スタンプ"></div>
+    <div class="zonebanner" id="zoneBanner" role="alert" hidden></div>
 
     <div class="fabs">
       <button class="fab" id="btnLayers" aria-label="地図の種類" aria-expanded="false">
@@ -46,6 +47,8 @@
       <div class="label">重ねる</div>
       <label><input type="checkbox" id="ovHillshade"> 陰影起伏</label>
       <label><input type="checkbox" id="ovAreas"> 保存済みの範囲</label>
+      <label><input type="checkbox" id="ovHmap"> ハンターマップ</label>
+      <label><input type="checkbox" id="ovZones"> 登録した区域</label>
     </div>
 
     <div class="addbar" id="addBar" hidden>
@@ -53,6 +56,22 @@
       <div class="addacts">
         <button class="btn ghost" id="addCancel">やめる</button>
         <button class="btn primary" id="addHere">現在地に押す</button>
+      </div>
+    </div>
+
+    <div class="drawbar" id="drawBar" hidden>
+      <div class="drawrow">
+        <label for="drawType" class="sr">区域の種類</label>
+        <select id="drawType"></select>
+        <span class="mono note" id="drawCount">0点</span>
+      </div>
+      <label for="drawName" class="sr">区域の名前</label>
+      <input type="text" id="drawName" placeholder="名前(例: 立田山鳥獣保護区)">
+      <p class="note">境界の角を順に地図でタップします。最後の点は最初の点と自動でつながります。</p>
+      <div class="addacts">
+        <button class="btn ghost" id="drawCancel">やめる</button>
+        <button class="btn" id="drawUndo">1つ戻す</button>
+        <button class="btn primary" id="drawDone" disabled>登録する</button>
       </div>
     </div>
 
@@ -65,7 +84,8 @@
       <button class="tab" role="tab" data-v="track" aria-selected="true">山行</button>
       <button class="tab" role="tab" data-v="traps" aria-selected="false">罠 <b id="trapBadge"></b></button>
       <button class="tab" role="tab" data-v="records" aria-selected="false">記録</button>
-      <button class="tab" role="tab" data-v="offline" aria-selected="false">地図保存</button>
+      <button class="tab" role="tab" data-v="zones" aria-selected="false">区域</button>
+      <button class="tab" role="tab" data-v="offline" aria-selected="false">保存</button>
     </div>
     <div class="view" id="view"></div>
   </section>
@@ -90,6 +110,24 @@
       <span class="grow"></span>
       <button type="button" class="btn ghost" id="pinCancel">閉じる</button>
       <button type="submit" class="btn primary" id="pinSave">保存</button>
+    </div>
+  </form>
+</dialog>
+
+<input type="file" id="hmapFile" accept="image/*" multiple hidden>
+<input type="file" id="zoneFile" accept=".geojson,.json,application/geo+json,application/json" hidden>
+
+<dialog id="sheetDialog">
+  <form method="dialog" id="sheetForm">
+    <div class="dlg-head"><h2>どの地図ですか?</h2></div>
+    <p class="note" id="sheetFile"></p>
+    <label for="sheetPick">ハンターマップのページ
+      <select id="sheetPick"></select>
+    </label>
+    <p class="note">選ぶと、画像の中の格子線(メッシュの線)を探して自動で位置を合わせます。熊本県の地図でなければ「手で合わせる」を選んでください。</p>
+    <div class="dlg-acts"><span class="grow"></span>
+      <button type="button" class="btn ghost" id="sheetCancel">取り込まない</button>
+      <button type="submit" class="btn primary">決定</button>
     </div>
   </form>
 </dialog>

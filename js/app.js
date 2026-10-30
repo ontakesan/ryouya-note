@@ -1,7 +1,11 @@
 import { LAYERS, ATTRIBUTION, distance, fmtDist, bearing, dirName } from './geo.js';
 import { elevationAt } from './dem.js';
-import { sunTimes, season, hhmm, span } from './sun.js';
-import { store, uid } from './store.js';
+import { sunTimes, hhmm, span } from './sun.js';
+import { store, uid, migrateFromA } from './store.js';
+import { seasonStatus, animalOpen, PREFS } from './seasons.js';
+import { ZONE_TYPES, geoImageLayer, shrinkImage, openCalibrator, zonesAt, inPolygon, solveAffine, bboxOf } from './hmap.js';
+import { SHEETS, SOURCE_PAGE, identify, gridPairs, refineGrid } from './kumamoto-sheets.js';
+import { putImage, getImage, delImage } from './idb.js';
 import * as off from './offline.js';
 
 /* =========================================================
@@ -17,6 +21,9 @@ const TYPES = {
   catch:  { name: '捕獲',     short: '獲', color: '#c0392b' },
 };
 const HOUR = 3600e3;
+const PREF = 'kumamoto';
+var overlaysReady = false; // var: 宣言より前に参照されても undefined で済むように
+const migratedCount = migrateFromA();
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const ago = t => { const h = (Date.now() - t) / HOUR; return h < 1 ? '1時間以内' : h < 24 ? `${Math.floor(h)}時間前` : `${Math.floor(h / 24)}日前`; };
@@ -29,7 +36,10 @@ const S = {
   tracks: store.get('tracks', []),
   active: store.get('activeTrack', null),   // 記録中の軌跡
   areas: store.get('areas', []),            // オフライン保存した範囲
-  settings: store.get('settings', { base: 'std', hillshade: true, showAreas: false }),
+  settings: { showHmap: true, showZones: true, ...store.get('settings', { base: 'std', hillshade: true, showAreas: false }) },
+  sheets: store.get('sheets', []),          // 取り込んだハンターマップ画像(本体はIndexedDB)
+  zones: store.get('zones', []),            // 登録した区域
+  draw: null, zoneState: '',
   pos: null, follow: false, watchId: null,
   view: 'track', editing: null, stamp: null, dl: null,
 };
@@ -42,7 +52,7 @@ const saveSettings = () => store.set('settings', S.settings);
 /* =========================================================
    地図
    ========================================================= */
-const v0 = store.get('view', { lat: 34.53, lng: 132.40, z: 13 });
+const v0 = store.get('view', { lat: PREFS[PREF].center[0], lng: PREFS[PREF].center[1], z: 10 });
 const map = L.map('map', { zoomControl: false, minZoom: 5, maxZoom: 18, tapHold: true }).setView([v0.lat, v0.lng], v0.z);
 L.control.scale({ imperial: false, position: 'bottomleft' }).addTo(map);
 map.attributionControl.setPrefix(false);
@@ -77,6 +87,9 @@ function applyLayers() {
   $(`#base-${S.settings.base}`).checked = true;
   $('#ovHillshade').checked = S.settings.hillshade;
   $('#ovAreas').checked = S.settings.showAreas;
+  $('#ovHmap').checked = S.settings.showHmap;
+  $('#ovZones').checked = S.settings.showZones;
+  if (overlaysReady) refreshOverlays(); // 区域の部品ができる前(起動直後)は呼ばない
 }
 applyLayers();
 
@@ -87,6 +100,7 @@ map.on('moveend', () => {
   if (S.view === 'offline') renderOfflinePlan();
 });
 map.on('dragstart', () => { if (S.follow) setFollow(false); });
+map.on('moveend', () => { if (overlaysReady) drawSheets(); });
 
 /* レイヤーメニュー */
 $('#btnLayers').onclick = () => {
@@ -97,6 +111,8 @@ $('#layerMenu').addEventListener('change', e => {
   if (e.target.name === 'base') S.settings.base = e.target.value;
   if (e.target.id === 'ovHillshade') S.settings.hillshade = e.target.checked;
   if (e.target.id === 'ovAreas') S.settings.showAreas = e.target.checked;
+  if (e.target.id === 'ovHmap') S.settings.showHmap = e.target.checked;
+  if (e.target.id === 'ovZones') S.settings.showZones = e.target.checked;
   saveSettings(); applyLayers();
 });
 map.on('click', () => { $('#layerMenu').hidden = true; });
@@ -116,10 +132,11 @@ function toast(msg, ms = 3200) {
 function renderTop() {
   const now = new Date();
   const ref = S.pos ? [S.pos.lat, S.pos.lng] : [map.getCenter().lat, map.getCenter().lng];
-  const se = season(now);
+  const se = seasonStatus(now, PREF);
   const sc = $('#seasonChip');
-  if (se.open) { sc.textContent = `猟期 残り${Math.ceil((se.end - now) / 864e5)}日`; sc.className = 'chip season'; }
-  else { sc.textContent = `解禁まで${Math.ceil((se.start - now) / 864e5)}日`; sc.className = 'chip season off'; }
+  sc.textContent = se.text;
+  sc.className = 'chip season' + (se.open ? '' : ' off');
+  sc.title = `${se.pref.name}の猟期(県の告示で最終確認してください)`;
 
   const st = sunTimes(now, ref[0], ref[1]);
   const sun = $('#sunChip');
@@ -176,6 +193,7 @@ function onPos(p) {
   if (S.follow || first) map.setView([lat, lng], Math.max(map.getZoom(), first ? 15 : 0), { animate: !first });
   if (S.active && !S.active.paused) addTrackPoint(S.pos);
   if (S.stamp) $('#addHere').disabled = false;
+  checkZones();
   renderTop();
   throttledPanel();
 }
@@ -355,7 +373,7 @@ $('#pinForm').addEventListener('submit', e => {
   if (r._new) { delete r._new; S.records.push(r); lastType = r.type; store.set('lastType', lastType); }
   lastAnimal = r.animal; store.set('lastAnimal', lastAnimal);
   saveRecords(); drawRecords(); $('#pinDialog').close(); renderPanel();
-  toast(`${TYPES[r.type].name}を保存しました`);
+  if (!warnRecord(r)) toast(`${TYPES[r.type].name}を保存しました`);
 });
 $('#pinCancel').onclick = () => $('#pinDialog').close();
 $('#pinDelete').onclick = () => {
@@ -398,9 +416,12 @@ function placeStamp(latlng) {
   elevationAt(r.lat, r.lng).then(e => { if (e != null) { r.ele = Math.round(e); saveRecords(); } });
   saveRecords(); drawRecords(); renderPanel();
   navigator.vibrate?.(30);
-  toast(`${TYPES[r.type].name}を置きました。ピンを押すとメモを書けます`);
+  if (!warnRecord(r)) toast(`${TYPES[r.type].name}を置きました。ピンを押すとメモを書けます`);
 }
-map.on('click', e => { if (S.stamp) placeStamp(e.latlng); });
+map.on('click', e => {
+  if (S.draw) addDrawPoint(e.latlng);
+  else if (S.stamp) placeStamp(e.latlng);
+});
 $('#addCancel').onclick = () => setStamp(null);
 $('#addHere').onclick = () => { if (S.stamp && S.pos) placeStamp({ lat: S.pos.lat, lng: S.pos.lng }); };
 
@@ -429,7 +450,7 @@ new ResizeObserver(() => map.invalidateSize()).observe($('.stage'));
 const view = $('#view');
 function renderPanel() {
   document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.v === S.view)));
-  ({ track: V_track, traps: V_traps, records: V_records, offline: V_offline })[S.view]();
+  ({ track: V_track, traps: V_traps, records: V_records, zones: V_zones, offline: V_offline })[S.view]();
 }
 
 function fromHere(r) {
@@ -487,7 +508,7 @@ function V_traps() {
       const t = TYPES[r.type];
       return `<div class="row"><div class="ic" style="background:${t.color}">${t.short}</div>
         <div class="body" data-go="${r.id}"><div class="t">${t.name} ・ ${esc(r.animal)}</div>
-        <div class="m">設置 ${ago(r.set)} ・ 確認 ${ago(r.checked)}${fromHere(r)}</div>
+        <div class="m">設置 ${ago(r.set)} ・ 確認 ${ago(r.checked)}${fromHere(r)}</div>${zoneBadge(r)}
         ${r.note ? `<div class="note">${esc(r.note)}</div>` : ''}</div>
         <div class="side">${trapState(r)}<button class="btn" data-check="${r.id}">見回り済</button></div></div>`;
     }).join('') || '<div class="empty">罠はまだありません。＋ボタンで「くくり罠」か「箱罠」を記録してください。地図の長押しでも記録できます。</div>'}</div>
@@ -504,7 +525,7 @@ function V_records() {
       const t = TYPES[r.type];
       return `<div class="row"><div class="ic" style="background:${t.color}">${t.short}</div>
         <div class="body" data-go="${r.id}"><div class="t">${t.name} ・ ${esc(r.animal)}</div>
-        <div class="m">${ago(r.at)}${r.ele != null ? ` ・ 標高${r.ele}m` : ''}${fromHere(r)}</div>
+        <div class="m">${ago(r.at)}${r.ele != null ? ` ・ 標高${r.ele}m` : ''}${fromHere(r)}</div>${zoneBadge(r)}
         ${r.note ? `<div class="note">${esc(r.note)}</div>` : ''}</div></div>`;
     }).join('') || '<div class="empty">足跡・糞・ヌタ場・捕獲などを記録すると、ここに並びます。</div>'}</div>
     <p class="note">書き出したファイルは、次の段階で作る「ハンターマップとの照合」や他の地図アプリで使えます。</p>`;
@@ -655,11 +676,435 @@ view.addEventListener('click', async e => {
   }
 });
 
+
+/* =========================================================
+   ハンターマップの重ね表示
+   ========================================================= */
+const sheetLayers = new Map(); // id -> { layer, url }
+async function sheetUrl(sh) {
+  if (sheetLayers.get(sh.id)?.url) return sheetLayers.get(sh.id).url;
+  const blob = await getImage(sh.id);
+  if (!blob) return null;
+  const url = URL.createObjectURL(blob);
+  sheetLayers.set(sh.id, { ...(sheetLayers.get(sh.id) || {}), url });
+  return url;
+}
+const MAX_SHOWN = 3; // 大きな画像を一度に重ねすぎるとスマホで落ちるので、画面に近い順に3枚まで
+// 画像の読み込みを待つ間に次の呼び出しが来ると、同じ地図が二重に重なり、
+// 片方が「隠す」「透明度」「削除」の対象から外れてしまう。必ず1回ずつ順番に描き直す
+let sheetsRunning = null, sheetsAgain = false;
+function drawSheets() {
+  if (sheetsRunning) { sheetsAgain = true; return sheetsRunning; }
+  sheetsRunning = (async () => {
+    try {
+      do { sheetsAgain = false; await drawSheetsOnce(); } while (sheetsAgain);
+    } finally { sheetsRunning = null; }
+  })();
+  return sheetsRunning;
+}
+async function drawSheetsOnce() {
+  const b = map.getBounds().pad(0.3), c = map.getCenter();
+  const near = S.sheets
+    .filter(sh => sh.visible && sh.M && (!sh.bbox || b.intersects([[sh.bbox[0], sh.bbox[1]], [sh.bbox[2], sh.bbox[3]]])))
+    .map(sh => ({ sh, d: sh.bbox ? Math.hypot((sh.bbox[0] + sh.bbox[2]) / 2 - c.lat, (sh.bbox[1] + sh.bbox[3]) / 2 - c.lng) : 0 }))
+    .sort((x, y) => x.d - y.d).slice(0, MAX_SHOWN).map(x => x.sh.id);
+  for (const sh of S.sheets) {
+    const entry = sheetLayers.get(sh.id);
+    const want = S.settings.showHmap && near.includes(sh.id);
+    if (entry?.layer && (!want || entry.M !== sh.M)) { map.removeLayer(entry.layer); entry.layer = null; }
+    if (want && !sheetLayers.get(sh.id)?.layer) {
+      const url = await sheetUrl(sh);
+      if (!url) continue;
+      // 待っている間に設定が変わっていたら(隠す・削除・透明度)、それに従う
+      if (!S.settings.showHmap || !sh.visible || !S.sheets.includes(sh)) continue;
+      const prev = sheetLayers.get(sh.id);
+      if (prev?.layer) map.removeLayer(prev.layer);
+      const layer = geoImageLayer(url, sh.w, sh.h, sh.M, sh.opacity).addTo(map);
+      sheetLayers.set(sh.id, { url, layer, M: sh.M });
+    }
+  }
+  // 削除された画像の後始末
+  for (const [id, e] of sheetLayers) if (!S.sheets.find(s => s.id === id)) {
+    if (e.layer) map.removeLayer(e.layer);
+    if (e.url) URL.revokeObjectURL(e.url);
+    sheetLayers.delete(id);
+  }
+}
+const saveSheets = () => store.set('sheets', S.sheets);
+
+/* 取り込み: 熊本県の地図なら自動で位置合わせ。まとめて選べる */
+function askSheet(fileName) {
+  return new Promise(resolve => {
+    const dlg = $('#sheetDialog');
+    $('#sheetFile').textContent = `「${fileName}」は、どのページの地図ですか?`;
+    $('#sheetPick').innerHTML = SHEETS.map(sh => `<option value="${sh.id}">${esc(sh.title)}</option>`).join('') + '<option value="">熊本県の地図ではない(手で合わせる)</option>';
+    const done = v => { dlg.close(); resolve(v); };
+    $('#sheetForm').onsubmit = e => { e.preventDefault(); done($('#sheetPick').value || 'manual'); };
+    $('#sheetCancel').onclick = () => done(null);
+    dlg.showModal();
+  });
+}
+function finishSheet(sh, pairs, how) {
+  const sol = solveAffine(pairs);
+  if (!sol) return false;
+  sh.pairs = pairs.map(p => ({ u: +p.u.toFixed(1), v: +p.v.toFixed(1), lat: +p.lat.toFixed(7), lng: +p.lng.toFixed(7) }));
+  sh.M = sol.M; sh.rms = sol.rms; sh.auto = how; sh.visible = true;
+  sh.bbox = bboxOf(sol.M, sh.w, sh.h);
+  return true;
+}
+async function importFile(file) {
+  const found = await identify(file);
+  let sheetDef = found?.sheet || null, how = found?.how || null;
+  if (!sheetDef) {
+    const pick = await askSheet(file.name);
+    if (pick === null) return null;
+    sheetDef = pick === 'manual' ? null : SHEETS.find(s => s.id === pick);
+    how = sheetDef ? 'grid' : null;
+  }
+  const { blob, w, h, canvas, scale } = await shrinkImage(file);
+  const sh = { id: uid(), name: sheetDef ? sheetDef.title : file.name.replace(/\.[^.]+$/, ''), sheetId: sheetDef?.id || null,
+    w, h, M: null, pairs: [], opacity: 0.6, visible: true, at: Date.now() };
+  let ok = false, note = '';
+  if (sheetDef) {
+    const k = (w / sheetDef.w + h / sheetDef.h) / 2;
+    const sameShape = Math.abs(w / h - sheetDef.w / sheetDef.h) < 0.01;
+    if (how === 'exact') ok = finishSheet(sh, gridPairs(sheetDef, k), 'exact');
+    else if (sameShape) {
+      // 県の元ファイルと違う(新しい年度・再保存など)→ 画像の格子線を探し直す
+      const r = refineGrid(canvas, sheetDef, k);
+      if (r) { ok = finishSheet(sh, r.pairs, 'grid'); note = `格子線 ${r.found[0] + r.found[1]}/${r.expected[0] + r.expected[1]}本を検出`; }
+      if (!ok) { ok = finishSheet(sh, gridPairs(sheetDef, k), 'layout'); note = '格子線を見つけられなかったため、令和7年度版の配置で合わせました'; }
+    } else note = '画像の縦横の比率が県の地図と違います(切り抜き・スクリーンショットなど)';
+  }
+  canvas.width = canvas.height = 0; // メモリを返す
+  // 同じページの古い取り込みは置き換える
+  if (sh.sheetId) for (const old of S.sheets.filter(x => x.sheetId === sh.sheetId)) {
+    S.sheets = S.sheets.filter(x => x !== old); await delImage(old.id).catch(() => {});
+  }
+  await putImage(sh.id, blob);
+  S.sheets.push(sh);
+  return { sh, ok, note };
+}
+$('#hmapFile').addEventListener('change', async e => {
+  const files = [...e.target.files]; e.target.value = '';
+  if (!files.length) return;
+  const results = [];
+  for (const [i, file] of files.entries()) {
+    toast(`取り込み中 ${i + 1}/${files.length}: ${file.name}`, 20000);
+    try { const r = await importFile(file); if (r) results.push(r); }
+    catch (err) { console.error(err); toast(`「${file.name}」を取り込めませんでした。JPGかPNGの画像を選んでください(PDFは不可)`, 6000); }
+  }
+  saveSheets();
+  S.settings.showHmap = true; saveSettings(); applyLayers();
+  const okOnes = results.filter(r => r.ok), manual = results.filter(r => !r.ok);
+  if (okOnes.length) {
+    const sh = okOnes[0].sh, bb = sh.bbox;
+    setFollow(false);
+    map.fitBounds([[bb[0], bb[1]], [bb[2], bb[3]]]);
+    const notes = okOnes.map(r => r.note).filter(Boolean);
+    toast(`${okOnes.length}枚を自動で位置合わせしました${notes.length ? `(${notes[0]})` : ''}`, 6000);
+  }
+  await drawSheets(); renderPanel();
+  if (manual.length) {
+    if (manual[0].note) toast(manual[0].note + '。手で位置を合わせてください', 6000);
+    calibrate(manual[0].sh);
+  }
+});
+async function calibrate(sh) {
+  const url = await sheetUrl(sh);
+  if (!url) { toast('画像が見つかりません。取り込み直してください'); return; }
+  const c = map.getCenter();
+  const pc = sh.pairs.length ? [sh.pairs[0].lat, sh.pairs[0].lng] : [c.lat, c.lng];
+  openCalibrator({
+    url, w: sh.w, h: sh.h, pairs: sh.pairs, center: pc, title: sh.name,
+    onDone({ pairs, M, rms }) {
+      sh.pairs = pairs; sh.M = M; sh.rms = pairs.length > 3 ? rms : null; sh.visible = true; sh.auto = null;
+      sh.bbox = bboxOf(M, sh.w, sh.h);
+      S.settings.showHmap = true; saveSettings();
+      saveSheets(); drawSheets(); renderPanel();
+      // 画像の中心あたりへ移動
+      const cu = sh.w / 2, cv = sh.h / 2;
+      const pt = L.point(M[0] * cu + M[2] * cv + M[4], M[1] * cu + M[3] * cv + M[5]);
+      map.setView(L.CRS.EPSG3857.pointToLatLng(pt, 18), Math.min(map.getZoom(), 12));
+      toast('ハンターマップを地図に重ねました。透明度は「区域」タブで変えられます', 5000);
+    },
+  });
+}
+
+/* =========================================================
+   区域の登録・表示・判定
+   ========================================================= */
+const zoneLayer = L.layerGroup();
+const saveZones = () => store.set('zones', S.zones);
+function drawZones() {
+  zoneLayer.clearLayers();
+  for (const z of S.zones) {
+    const t = ZONE_TYPES[z.type] || ZONE_TYPES.chui;
+    // スタンプ中・なぞり中は、区域の上をタップしても地図をタップしたのと同じに扱う
+    L.polygon(z.coords, { color: t.color, weight: 2.5, fillColor: t.color, fillOpacity: 0.16, dashArray: t.ban.gun && !t.ban.trap ? '8 5' : null, bubblingMouseEvents: false })
+      .on('click', e => {
+        if (S.draw) addDrawPoint(e.latlng);
+        else if (S.stamp) placeStamp(e.latlng);
+        else L.popup().setLatLng(e.latlng).setContent(`<b>${esc(z.name || t.name)}</b><br>${t.name} ・ ${t.rule}`).openOn(map);
+      })
+      .addTo(zoneLayer);
+  }
+}
+function refreshOverlays() {
+  S.settings.showZones ? zoneLayer.addTo(map) : map.removeLayer(zoneLayer);
+  drawSheets();
+}
+
+/** 記録した地点が区域内なら警告して true を返す */
+function warnRecord(r) {
+  const inside = S.zones.filter(z => z.coords.length >= 3 && inPolygon([r.lat, r.lng], z.coords));
+  if (!inside.length) return false;
+  const isTrap = TYPES[r.type]?.trap;
+  const bad = inside.filter(z => isTrap ? ZONE_TYPES[z.type]?.ban.trap : ZONE_TYPES[z.type]?.ban.gun || ZONE_TYPES[z.type]?.ban.trap);
+  const z = bad[0] || inside[0];
+  const t = ZONE_TYPES[z.type];
+  if (isTrap && t.ban.trap) {
+    navigator.vibrate?.([200, 100, 200]);
+    toast(`⚠ この場所は${t.name}「${z.name || ''}」の中です。わなは設置できません(許可がある場合を除く)`, 7000);
+  } else toast(`この場所は${t.name}「${z.name || ''}」の中です ・ ${t.rule}`, 5000);
+  return true;
+}
+function zoneBadge(r) {
+  const z = S.zones.find(z => z.coords.length >= 3 && inPolygon([r.lat, r.lng], z.coords));
+  if (!z) return '';
+  const t = ZONE_TYPES[z.type];
+  return `<div><span class="st zone" style="background:${t.color}">${t.name}の中</span></div>`;
+}
+
+/** 現在地の区域チェック。入った瞬間に振動で知らせる */
+function checkZones() {
+  const banner = $('#zoneBanner');
+  if (!S.pos || !S.zones.length) { banner.hidden = true; S.zoneState = ''; return; }
+  const { inside, near } = zonesAt([S.pos.lat, S.pos.lng], S.zones, 150);
+  const key = inside.map(z => z.id).sort().join(',');
+  if (inside.length) {
+    const z = inside.sort((a, b) => banRank(b) - banRank(a))[0], t = ZONE_TYPES[z.type];
+    banner.className = 'zonebanner in';
+    banner.innerHTML = `<span class="z-ic">⚠</span><div>${esc(t.name)}「${esc(z.name || '名前なし')}」の中にいます<small>${esc(t.rule)}${inside.length > 1 ? ` ・ ほか${inside.length - 1}区域` : ''}</small></div>`;
+    banner.hidden = false;
+    if (key !== S.zoneState) navigator.vibrate?.([300, 120, 300]);
+  } else if (near.length) {
+    const { zone: z, d } = near[0], t = ZONE_TYPES[z.type];
+    banner.className = 'zonebanner near';
+    banner.innerHTML = `<span class="z-ic">!</span><div>${esc(t.name)}「${esc(z.name || '名前なし')}」まで 約${Math.round(d)}m<small>${esc(t.rule)}</small></div>`;
+    banner.hidden = false;
+  } else banner.hidden = true;
+  S.zoneState = key;
+}
+const banRank = z => { const b = ZONE_TYPES[z.type]?.ban || {}; return (b.gun ? 1 : 0) + (b.trap ? 1 : 0); };
+
+/* 区域をなぞって登録 */
+const drawLine = L.polygon([], { color: '#e8590c', weight: 3, dashArray: '6 6', fillOpacity: 0.1 });
+const drawVerts = L.layerGroup();
+const drawType = $('#drawType');
+drawType.innerHTML = Object.entries(ZONE_TYPES).map(([k, t]) => `<option value="${k}">${t.name}</option>`).join('');
+function startDraw() {
+  setStamp(null);
+  S.draw = { pts: [] };
+  drawType.value = 'jukinshi';
+  $('#drawName').value = '';
+  $('#drawBar').hidden = false;
+  document.body.classList.add('drawing');
+  drawLine.setLatLngs([]).addTo(map); drawVerts.clearLayers().addTo(map);
+  if (innerWidth < 860) sheet.dataset.open = 'false';
+  updateDraw();
+  toast('境界の角を順にタップしてください。ハンターマップを重ねておくと、なぞりやすくなります', 5000);
+}
+function addDrawPoint(ll) {
+  S.draw.pts.push([+ll.lat.toFixed(6), +ll.lng.toFixed(6)]);
+  navigator.vibrate?.(15);
+  updateDraw();
+}
+function updateDraw() {
+  const pts = S.draw.pts;
+  drawLine.setLatLngs(pts);
+  drawLine.setStyle({ color: ZONE_TYPES[drawType.value].color });
+  drawVerts.clearLayers();
+  pts.forEach(p => L.circleMarker(p, { radius: 5, color: '#fff', weight: 2, fillColor: ZONE_TYPES[drawType.value].color, fillOpacity: 1, interactive: false }).addTo(drawVerts));
+  $('#drawCount').textContent = `${pts.length}点`;
+  $('#drawDone').disabled = pts.length < 3;
+  $('#drawUndo').disabled = !pts.length;
+}
+function endDraw() {
+  S.draw = null;
+  $('#drawBar').hidden = true;
+  document.body.classList.remove('drawing');
+  map.removeLayer(drawLine); map.removeLayer(drawVerts);
+}
+drawType.addEventListener('change', () => S.draw && updateDraw());
+$('#drawUndo').onclick = () => { S.draw.pts.pop(); updateDraw(); };
+$('#drawCancel').onclick = endDraw;
+$('#drawDone').onclick = () => {
+  const z = { id: uid(), type: drawType.value, name: $('#drawName').value.trim(), coords: S.draw.pts, at: Date.now() };
+  S.zones.push(z); saveZones();
+  endDraw();
+  S.settings.showZones = true; saveSettings(); applyLayers();
+  drawZones(); checkZones(); drawRecords();
+  S.view = 'zones'; renderPanel();
+  toast(`${ZONE_TYPES[z.type].name}を登録しました`);
+};
+
+/* GeoJSON の読み込み(仲間と区域を共有する用) */
+$('#zoneFile').addEventListener('change', async e => {
+  const file = e.target.files[0]; e.target.value = '';
+  if (!file) return;
+  try {
+    const gj = JSON.parse(await file.text());
+    const feats = gj.type === 'FeatureCollection' ? gj.features : [gj];
+    let n = 0;
+    for (const f of feats) {
+      const g = f.geometry; if (!g) continue;
+      const polys = g.type === 'Polygon' ? [g.coordinates] : g.type === 'MultiPolygon' ? g.coordinates : [];
+      for (const poly of polys) {
+        const ring = poly[0].map(([lng, lat]) => [lat, lng]);
+        if (ring.length > 3 && ring[0][0] === ring.at(-1)[0] && ring[0][1] === ring.at(-1)[1]) ring.pop();
+        const p = f.properties || {};
+        const type = ZONE_TYPES[p.zoneType] ? p.zoneType : (Object.entries(ZONE_TYPES).find(([, t]) => t.name === p.type)?.[0] || 'chui');
+        S.zones.push({ id: uid(), type, name: p.name || '', coords: ring, at: Date.now() }); n++;
+      }
+    }
+    saveZones(); drawZones(); checkZones(); drawRecords(); renderPanel();
+    toast(n ? `${n}件の区域を読み込みました` : '区域(多角形)が見つかりませんでした');
+  } catch { toast('ファイルを読み込めませんでした。GeoJSON形式か確認してください'); }
+});
+function exportZones() {
+  const fc = { type: 'FeatureCollection', features: S.zones.map(z => ({
+    type: 'Feature',
+    properties: { name: z.name, zoneType: z.type, type: ZONE_TYPES[z.type].name, rule: ZONE_TYPES[z.type].rule },
+    geometry: { type: 'Polygon', coordinates: [[...z.coords, z.coords[0]].map(([la, ln]) => [ln, la])] },
+  })) };
+  download(`区域-${new Date().toISOString().slice(0, 10)}.geojson`, JSON.stringify(fc), 'application/geo+json');
+}
+
+/* --- 区域タブ --- */
+function V_zones() {
+  const P = PREFS[PREF];
+  const se = seasonStatus(new Date(), PREF);
+  view.innerHTML = `
+    <div><h2>ハンターマップ</h2>
+      <p class="note">県の鳥獣保護区等位置図を取り込むと、<b>自動で位置を合わせて</b>地図に重ねます。</p></div>
+    <ol class="steps">
+      <li>下の一覧で、猟場が載っているページの「画像を開く」を押す</li>
+      <li>開いた画像を長押しして保存する(iPhoneは「"写真"に保存」、Androidは「画像をダウンロード」)</li>
+      <li>「保存した画像を取り込む」を押して選ぶ(何枚でもまとめて選べます)</li>
+    </ol>
+    <div class="list">${SHEETS.map(def => {
+      const sh = S.sheets.find(x => x.sheetId === def.id);
+      return `<div class="sheetrow">
+        ${sh ? `<img class="thumb" data-thumb="${sh.id}" alt="">` : '<div class="thumb"></div>'}
+        <div style="min-width:0">
+          <div class="t">${esc(def.title)}</div>
+          <div class="m">${sh ? (sh.M ? `取り込み済み ・ ${sh.auto ? '自動' : '手動'}で位置合わせ${sh.rms != null ? ` ・ 誤差 約${Math.round(sh.rms)}m` : ''}` : '<span style="color:var(--bad)">位置合わせがまだです</span>') : 'まだ取り込んでいません'}</div>
+          ${sh?.M ? `<label class="slider" for="op-${sh.id}">透明度<input type="range" id="op-${sh.id}" min="0.1" max="1" step="0.05" value="${sh.opacity}" data-op="${sh.id}"></label>` : ''}
+          <div class="acts">
+            ${sh ? `
+              ${sh.M ? `<button class="btn" data-z="go" data-id="${sh.id}">地図で見る</button><button class="btn ghost" data-z="vis" data-id="${sh.id}">${sh.visible ? '隠す' : '表示'}</button>` : `<button class="btn primary" data-z="cal" data-id="${sh.id}">位置合わせ</button>`}
+              <button class="btn ghost danger" data-z="delsheet" data-id="${sh.id}">削除</button>`
+            : `<a class="btn" href="${def.url}" target="_blank" rel="noopener">画像を開く</a>`}
+          </div>
+        </div>
+      </div>`;
+    }).join('')}</div>
+    <div class="btnrow"><button class="btn primary big" data-z="import">保存した画像を取り込む</button></div>
+    ${S.sheets.some(x => !x.sheetId) ? `<div><div class="label">ほかの地図</div><div class="list">${S.sheets.filter(x => !x.sheetId).map(sh => `
+      <div class="sheetrow">
+        <img class="thumb" data-thumb="${sh.id}" alt="">
+        <div style="min-width:0">
+          <div class="t">${esc(sh.name)}</div>
+          <div class="m">${sh.M ? `位置合わせ済み ・ ${sh.pairs.length}点${sh.rms != null ? ` ・ 誤差 約${Math.round(sh.rms)}m` : ''}` : '<span style="color:var(--bad)">位置合わせがまだです</span>'}</div>
+          ${sh.M ? `<label class="slider" for="op-${sh.id}">透明度<input type="range" id="op-${sh.id}" min="0.1" max="1" step="0.05" value="${sh.opacity}" data-op="${sh.id}"></label>` : ''}
+          <div class="acts">
+            <button class="btn ${sh.M ? '' : 'primary'}" data-z="cal" data-id="${sh.id}">${sh.M ? '合わせ直す' : '位置合わせ'}</button>
+            ${sh.M ? `<button class="btn ghost" data-z="vis" data-id="${sh.id}">${sh.visible ? '隠す' : '表示'}</button>` : ''}
+            <button class="btn ghost danger" data-z="delsheet" data-id="${sh.id}">削除</button>
+          </div>
+        </div>
+      </div>`).join('')}</div></div>` : ''}
+    <p class="note">地図: <a class="link" href="${SOURCE_PAGE}" target="_blank" rel="noopener">熊本県 鳥獣保護区等位置図</a>(令和7年度版に対応。新しい年度版も格子線を探して合わせます)。画像は県の著作物のため、各自で保存して取り込む方式にしています。</p>
+
+    <div><h2>区域</h2><p class="note">保護区や銃猟禁止区域を登録すると、中に入ったときと150m以内に近づいたときに知らせます。わなを置こうとした場所が禁止区域なら警告します。</p></div>
+    <div class="legend-z">${Object.values(ZONE_TYPES).map(t => `<span><i class="zsw" style="color:${t.color};background:${t.color}33"></i>${t.name}</span>`).join('')}</div>
+    <div class="list">${S.zones.map(z => {
+      const t = ZONE_TYPES[z.type] || ZONE_TYPES.chui;
+      const inside = S.pos && inPolygon([S.pos.lat, S.pos.lng], z.coords);
+      return `<div class="row"><div class="ic" style="background:${t.color}">区</div>
+        <div class="body" data-z="fit" data-id="${z.id}"><div class="t">${esc(z.name || '名前なし')}</div>
+        <div class="m">${t.name} ・ ${t.rule}</div>${inside ? '<div><span class="st bad">いま中にいます</span></div>' : ''}</div>
+        <div class="side"><button class="btn ghost danger" data-z="delzone" data-id="${z.id}">削除</button></div></div>`;
+    }).join('') || '<div class="empty">まだありません。</div>'}</div>
+    <div class="btnrow">
+      <button class="btn primary big" data-z="draw">区域をなぞって登録</button>
+    </div>
+    <div class="btnrow">
+      <button class="btn" data-z="importzone">GeoJSONを読み込む</button>
+      <button class="btn" data-z="exportzone" ${S.zones.length ? '' : 'disabled'}>書き出して仲間と共有</button>
+    </div>
+
+    <div><h2>${P.name}の猟期</h2>
+      <p class="note">一般 ${se.general.start.getMonth() + 1}/${se.general.start.getDate()}〜${se.general.end.getMonth() + 1}/${se.general.end.getDate()}
+      ${se.extended.map(e => ` ・ ${e.label} ${e.start.getMonth() + 1}/${e.start.getDate()}〜${e.end.getMonth() + 1}/${e.end.getDate()}`).join('')}
+      ・ 今日: イノシシ ${animalOpen(new Date(), 'イノシシ', PREF) ? '<b style="color:var(--ok)">可</b>' : '不可'}、その他 ${animalOpen(new Date(), 'その他', PREF) ? '<b style="color:var(--ok)">可</b>' : '不可'}</p>
+      <p class="note">区域の登録とこの表示は補助です。元の地図が10万分の1のため、境界には数十mのずれが出ます。境界付近では現地の標識と公式マップで確認してください。<a class="link" href="${P.source}" target="_blank" rel="noopener">猟期の出典</a></p></div>`;
+  // サムネイル
+  view.querySelectorAll('[data-thumb]').forEach(async img => {
+    const sh = S.sheets.find(s => s.id === img.dataset.thumb);
+    const url = sh && await sheetUrl(sh);
+    if (url) img.src = url;
+  });
+}
+view.addEventListener('input', e => {
+  const id = e.target.dataset.op; if (!id) return;
+  const sh = S.sheets.find(s => s.id === id); sh.opacity = +e.target.value;
+  sheetLayers.get(id)?.layer?.setOpacity(sh.opacity);
+  saveSheets();
+});
+view.addEventListener('click', async e => {
+  const b = e.target.closest('[data-z]'); if (!b) return;
+  const id = b.dataset.id, act = b.dataset.z;
+  if (act === 'import') $('#hmapFile').click();
+  else if (act === 'importzone') $('#zoneFile').click();
+  else if (act === 'exportzone') exportZones();
+  else if (act === 'draw') startDraw();
+  else if (act === 'cal') calibrate(S.sheets.find(s => s.id === id));
+  else if (act === 'go') {
+    const sh = S.sheets.find(s => s.id === id), bb = sh.bbox || bboxOf(sh.M, sh.w, sh.h);
+    sh.visible = true; S.settings.showHmap = true; saveSettings(); applyLayers(); saveSheets();
+    setFollow(false); map.fitBounds([[bb[0], bb[1]], [bb[2], bb[3]]]);
+    if (innerWidth < 860) sheet.dataset.open = 'false';
+    drawSheets();
+  }
+  else if (act === 'vis') {
+    const sh = S.sheets.find(s => s.id === id); sh.visible = !sh.visible;
+    if (sh.visible) { S.settings.showHmap = true; saveSettings(); applyLayers(); }
+    saveSheets(); drawSheets(); renderPanel();
+  }
+  else if (act === 'delsheet' || act === 'delzone') {
+    if (b.dataset.armed !== '1') { b.dataset.armed = '1'; b.textContent = '本当に削除'; return; }
+    if (act === 'delsheet') { S.sheets = S.sheets.filter(s => s.id !== id); saveSheets(); await delImage(id).catch(() => {}); drawSheets(); }
+    else { S.zones = S.zones.filter(z => z.id !== id); saveZones(); drawZones(); checkZones(); drawRecords(); }
+    renderPanel(); toast('削除しました');
+  }
+  else if (act === 'fit') {
+    const z = S.zones.find(z => z.id === id);
+    setFollow(false); map.fitBounds(z.coords, { padding: [40, 40] });
+    if (innerWidth < 860) sheet.dataset.open = 'false';
+  }
+});
+drawZones();
+overlaysReady = true;
+refreshOverlays();
+
 /* =========================================================
    起動
    ========================================================= */
 renderTop();
 renderPanel();
+if (migratedCount) toast(`以前の版の記録${migratedCount}件を引き継ぎました`, 5000);
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js').then(reg => reg.update()).catch(err => console.warn('SW登録に失敗', err));
   // 新しい版が入ったら一度だけ読み直して最新にする

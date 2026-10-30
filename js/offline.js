@@ -1,7 +1,8 @@
 // 範囲を指定して地理院タイルを端末に保存する
 import { LAYERS, tilesInBounds, tileUrl } from './geo.js';
 
-export const OFFLINE_CACHE = 'tiles-offline-v1';
+export const OFFLINE_CACHE = 'b-tiles-offline-v1';
+const LEGACY_CACHES = ['tiles-offline-v1']; // A版で保存した地図
 export const MAX_TILES_PER_AREA = 6000;
 const LOW_ZOOM = 10; // 周辺の見通し用に、ここから上を保存
 
@@ -50,8 +51,11 @@ export async function downloadUrls(urls, { onProgress, signal } = {}) {
 }
 
 export async function deleteUrls(urls) {
-  const cache = await caches.open(OFFLINE_CACHE);
-  for (const u of urls) await cache.delete(u);
+  for (const name of [OFFLINE_CACHE, ...LEGACY_CACHES]) {
+    if (!(await caches.has(name))) continue;
+    const cache = await caches.open(name);
+    for (const u of urls) await cache.delete(u);
+  }
 }
 
 export async function storageInfo() {
