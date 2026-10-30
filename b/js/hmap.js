@@ -134,12 +134,14 @@ export function openCalibrator({ url, w, h, pairs: initial = [], center, title, 
 
   const im = L.map(root.querySelector('[data-m=img]'), {
     crs: L.CRS.Simple, minZoom: -6, maxZoom: 3, zoomSnap: 0.25, zoomControl: false, attributionControl: false,
+    inertia: false, // 指を離した後に滑ると、十字の位置がずれて合わせにくい
   });
   const imgBounds = [[0, 0], [-h, w]]; // Simple座標では緯度= -v, 経度= u として扱う
   L.imageOverlay(url, imgBounds).addTo(im);
+  im.setMaxBounds(L.latLngBounds(imgBounds).pad(0.15)); // 画像を見失わないように
   im.fitBounds(imgBounds);
 
-  const mm = L.map(root.querySelector('[data-m=map]'), { zoomControl: false, attributionControl: true, maxZoom: 18 }).setView(center, 13);
+  const mm = L.map(root.querySelector('[data-m=map]'), { zoomControl: false, attributionControl: true, maxZoom: 18, inertia: false }).setView(center, 13);
   mm.attributionControl.setPrefix(false);
   L.tileLayer(LAYERS.std.url, { maxZoom: 18, maxNativeZoom: 18, crossOrigin: 'anonymous', attribution: ATTRIBUTION }).addTo(mm);
 
