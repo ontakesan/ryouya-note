@@ -753,8 +753,13 @@ function drawZones() {
   zoneLayer.clearLayers();
   for (const z of S.zones) {
     const t = ZONE_TYPES[z.type] || ZONE_TYPES.chui;
-    L.polygon(z.coords, { color: t.color, weight: 2.5, fillColor: t.color, fillOpacity: 0.16, dashArray: t.ban.gun && !t.ban.trap ? '8 5' : null })
-      .bindPopup(`<b>${esc(z.name || t.name)}</b><br>${t.name} ・ ${t.rule}`)
+    // スタンプ中・なぞり中は、区域の上をタップしても地図をタップしたのと同じに扱う
+    L.polygon(z.coords, { color: t.color, weight: 2.5, fillColor: t.color, fillOpacity: 0.16, dashArray: t.ban.gun && !t.ban.trap ? '8 5' : null, bubblingMouseEvents: false })
+      .on('click', e => {
+        if (S.draw) addDrawPoint(e.latlng);
+        else if (S.stamp) placeStamp(e.latlng);
+        else L.popup().setLatLng(e.latlng).setContent(`<b>${esc(z.name || t.name)}</b><br>${t.name} ・ ${t.rule}`).openOn(map);
+      })
       .addTo(zoneLayer);
   }
 }

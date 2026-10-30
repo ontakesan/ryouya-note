@@ -1,7 +1,7 @@
 // 猟野ノート B版 Service Worker (scope: /b/)
 // ・アプリ本体: 先に保存し、裏で更新(stale-while-revalidate)
 // ・地理院タイル: 端末にあればそれを使い、無ければ取りに行って閲覧キャッシュに入れる
-const VERSION = 'v1.0.1';
+const VERSION = 'v1.0.2';
 const SHELL = `b-shell-${VERSION}`;
 const BROWSE = 'b-tiles-browse-v1';
 const BROWSE_MAX = 3000;
