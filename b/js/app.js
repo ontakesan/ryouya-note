@@ -690,7 +690,19 @@ async function sheetUrl(sh) {
   return url;
 }
 const MAX_SHOWN = 3; // 大きな画像を一度に重ねすぎるとスマホで落ちるので、画面に近い順に3枚まで
-async function drawSheets() {
+// 画像の読み込みを待つ間に次の呼び出しが来ると、同じ地図が二重に重なり、
+// 片方が「隠す」「透明度」「削除」の対象から外れてしまう。必ず1回ずつ順番に描き直す
+let sheetsRunning = null, sheetsAgain = false;
+function drawSheets() {
+  if (sheetsRunning) { sheetsAgain = true; return sheetsRunning; }
+  sheetsRunning = (async () => {
+    try {
+      do { sheetsAgain = false; await drawSheetsOnce(); } while (sheetsAgain);
+    } finally { sheetsRunning = null; }
+  })();
+  return sheetsRunning;
+}
+async function drawSheetsOnce() {
   const b = map.getBounds().pad(0.3), c = map.getCenter();
   const near = S.sheets
     .filter(sh => sh.visible && sh.M && (!sh.bbox || b.intersects([[sh.bbox[0], sh.bbox[1]], [sh.bbox[2], sh.bbox[3]]])))
@@ -703,6 +715,10 @@ async function drawSheets() {
     if (want && !sheetLayers.get(sh.id)?.layer) {
       const url = await sheetUrl(sh);
       if (!url) continue;
+      // 待っている間に設定が変わっていたら(隠す・削除・透明度)、それに従う
+      if (!S.settings.showHmap || !sh.visible || !S.sheets.includes(sh)) continue;
+      const prev = sheetLayers.get(sh.id);
+      if (prev?.layer) map.removeLayer(prev.layer);
       const layer = geoImageLayer(url, sh.w, sh.h, sh.M, sh.opacity).addTo(map);
       sheetLayers.set(sh.id, { url, layer, M: sh.M });
     }
