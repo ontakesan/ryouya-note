@@ -1,7 +1,7 @@
 // 猟野ノート Service Worker
 // ・アプリ本体: 先に保存し、裏で更新(stale-while-revalidate)
 // ・地理院タイル: 端末にあればそれを使い、無ければ取りに行って閲覧キャッシュに入れる
-const VERSION = 'v2.0.0';
+const VERSION = 'v2.1.0';
 const SHELL = `app-shell-${VERSION}`;
 // 地図の保存先はB版のときの名前のまま(保存済みの地図を引き継ぐため)
 const BROWSE = 'b-tiles-browse-v1';
@@ -11,6 +11,7 @@ const ASSETS = [
   './', './index.html', './manifest.webmanifest', './css/style.css',
   './js/app.js', './js/geo.js', './js/dem.js', './js/sun.js', './js/store.js', './js/offline.js',
   './js/idb.js', './js/seasons.js', './js/hmap.js', './js/kumamoto-sheets.js',
+  './js/native.js', './js/tilestore.js',
   './icons/icon-192.png', './icons/icon-512.png',
   'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
   'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',

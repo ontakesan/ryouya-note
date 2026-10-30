@@ -1,0 +1,9 @@
+{
+  "appId": "io.github.ontakesan.ryouyanote",
+  "appName": "猟野ノート",
+  "webDir": "www",
+  "ios": {
+    "contentInset": "never",
+    "backgroundColor": "#1f2a1f"
+  }
+}

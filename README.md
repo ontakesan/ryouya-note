@@ -1,8 +1,9 @@
 # 猟野ノート
 
-熊本県の猟場向けの、狩猟用の地図アプリ。スマホのホーム画面に追加して使う PWA です。
+熊本県の猟場向けの、狩猟用の地図アプリ。同じコードで2つの形で使えます。
 
-**https://ontakesan.github.io/ryouya-note/**
+- **ブラウザ版(PWA)**: https://ontakesan.github.io/ryouya-note/ を開いて「ホーム画面に追加」
+- **iPhone アプリ**: 画面を消しても軌跡を記録し、区域に入ると振動と通知で知らせる。入れ方は [docs/iphone.md](docs/iphone.md)
 
 ## できること
 
@@ -43,8 +44,22 @@ GitHub Pages(Settings → Pages → `main` / root)で公開しています。ス
 
 ## 既知の制限
 
-- iPhone は画面を消すと GPS が止まります。記録中は画面を点けたままに(対応端末では自動で画面が消えないようにしています)。裏で記録し続けるにはアプリ化が必要です
+- ブラウザ版の iPhone は画面を消すと GPS が止まり、振動も使えません(iPhone アプリ版では解決)
 - 端末の空き容量が少ないと、ブラウザが保存した地図を消すことがあります
+- iPhone アプリ版を無料(Personal Team)で入れた場合、7日ごとに Mac から入れ直しが必要です
+
+## iPhone アプリ版のしくみ
+
+Capacitor 8 でこのコードを包んでいます。iPhone のアプリでは Service Worker が動かないため、地図タイルは IndexedDB(`js/tilestore.js`)に保存し、Leaflet も同梱します(`scripts/build-web.mjs` で `www/` を組み立て)。
+
+| 機能 | 使う部品 |
+|---|---|
+| 画面を消しても位置を取る | @capacitor-community/background-geolocation |
+| 区域に入ったときの通知 | @capacitor/local-notifications |
+| 振動 | @capacitor/haptics |
+| GPX・GeoJSON の書き出し | @capacitor/filesystem + @capacitor/share |
+
+ブラウザ版とアプリ版の違いは `js/native.js` にまとめています。`ios/` は各自の Mac で `scripts/ios-setup.sh` が作るのでリポジトリには含めません。ビルドできるかは GitHub Actions(`.github/workflows/ios-build.yml`)で毎回確かめています。
 
 ## ファイル構成
 
@@ -60,7 +75,13 @@ js/dem.js                標高タイルから標高を読む
 js/offline.js            範囲を指定した地図の保存
 js/sun.js                日の出・日没
 js/store.js / js/idb.js  端末内の保存
-sw.js                    オフライン対応(Service Worker)
+js/native.js             ブラウザ版とアプリ版の違い(位置情報・振動・通知・書き出し)
+js/tilestore.js          アプリ版の地図タイル保存(IndexedDB)
+sw.js                    ブラウザ版のオフライン対応(Service Worker)
+package.json / capacitor.config.json   iPhone アプリ化の設定
+scripts/build-web.mjs    アプリ用の www/ を組み立て
+scripts/ios-setup.sh     Mac で iPhone アプリを組み立てる準備
+docs/iphone.md           iPhone への入れ方・仲間への配り方
 b/ , ab.html             旧URLからの転送と、旧B版の後片付け
 ```
 
@@ -72,6 +93,3 @@ b/ , ab.html             旧URLからの転送と、旧B版の後片付け
 - 熊本県「鳥獣保護区等位置図」 https://www.pref.kumamoto.jp/soshiki/52/249903.html
 - 熊本県 狩猟期間 https://www.pref.kumamoto.jp/soshiki/52/277773.html
 
-## この先の予定
-
-- スマホアプリ化(Capacitor でこのコードを包み、裏でのGPS記録・通知・ストア配布に対応)

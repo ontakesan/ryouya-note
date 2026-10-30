@@ -7,6 +7,8 @@ import { ZONE_TYPES, geoImageLayer, shrinkImage, openCalibrator, zonesAt, inPoly
 import { SHEETS, SOURCE_PAGE, identify, gridPairs, refineGrid } from './kumamoto-sheets.js';
 import { putImage, getImage, delImage } from './idb.js';
 import * as off from './offline.js';
+import { isNative, haptic, notify, prepareNotifications, watchPosition, hasGeolocation, openLocationSettings, saveFile } from './native.js';
+import { cachedTileLayer } from './tilestore.js';
 
 /* =========================================================
    種類の定義
@@ -68,11 +70,11 @@ function retryTiles(layer) {
   });
   return layer;
 }
-const tile = key => retryTiles(L.tileLayer(LAYERS[key].url, {
+const tile = key => retryTiles(cachedTileLayer(LAYERS[key].url, {
   minZoom: 5, maxZoom: 18, maxNativeZoom: LAYERS[key].max, attribution: ATTRIBUTION, crossOrigin: 'anonymous',
 }));
 const bases = { std: tile('std'), pale: tile('pale'), photo: tile('photo') };
-const hillshade = retryTiles(L.tileLayer(LAYERS.hillshade.url, { maxZoom: 18, maxNativeZoom: 16, opacity: 0.35, crossOrigin: 'anonymous' }));
+const hillshade = retryTiles(cachedTileLayer(LAYERS.hillshade.url, { maxZoom: 18, maxNativeZoom: 16, opacity: 0.35, crossOrigin: 'anonymous' }));
 // 電波が戻ったら、欠けている地図を取り直す
 addEventListener('online', () => { Object.values(bases).forEach(l => map.hasLayer(l) && l.redraw()); if (map.hasLayer(hillshade)) hillshade.redraw(); });
 const areaLayer = L.layerGroup();
@@ -165,15 +167,17 @@ const meIcon = L.divIcon({ className: 'me', html: '<div class="dot"><div class="
 const meMarker = L.marker([0, 0], { icon: meIcon, interactive: false, keyboard: false, zIndexOffset: 1000 });
 const accCircle = L.circle([0, 0], { radius: 0, color: '#2b6cb0', weight: 1, fillOpacity: 0.1, interactive: false });
 
+// S.watchId には、位置の受け取りを止める関数が入る(アプリ版・ブラウザ版共通)
 function startGPS() {
-  if (!('geolocation' in navigator)) { toast('この端末では位置情報が使えません'); return false; }
+  if (!hasGeolocation()) { toast('この端末では位置情報が使えません'); return false; }
   if (S.watchId != null) return true;
-  S.watchId = navigator.geolocation.watchPosition(onPos, onPosErr, { enableHighAccuracy: true, maximumAge: 3000, timeout: 30000 });
+  S.watchId = watchPosition(onPos, onPosErr);
+  if (S.zones.length) prepareNotifications(); // 区域に入ったときの通知を許可してもらう
   renderTop();
   return true;
 }
 function stopGPS() {
-  if (S.watchId != null) navigator.geolocation.clearWatch(S.watchId);
+  if (S.watchId != null) S.watchId();
   S.watchId = null; S.pos = null;
   map.removeLayer(meMarker); map.removeLayer(accCircle);
   renderTop();
@@ -199,12 +203,13 @@ function onPos(p) {
 }
 function onPosErr(e) {
   const msg = {
-    1: '位置情報が許可されていません。ブラウザ(またはホーム画面のアプリ)の設定で位置情報を「許可」にしてください。',
+    1: isNative ? '位置情報が許可されていません。設定アプリの「猟野ノート」→「位置情報」で「常に」または「このAppの使用中のみ許可」にしてください。'
+                : '位置情報が許可されていません。ブラウザ(またはホーム画面のアプリ)の設定で位置情報を「許可」にしてください。',
     2: '現在地を取得できません。空が開けた場所で試してください。',
     3: '測位に時間がかかっています。そのまま待つか、場所を変えてください。',
   }[e.code] || '位置情報でエラーが起きました';
   toast(msg, 6000);
-  if (e.code === 1) { stopGPS(); setFollow(false); }
+  if (e.code === 1) { stopGPS(); setFollow(false); if (isNative) setTimeout(openLocationSettings, 1500); }
 }
 function setFollow(on) {
   S.follow = on;
@@ -243,6 +248,7 @@ function trackStats(points) {
 
 let wakeLock = null;
 async function keepAwake(on) {
+  if (isNative) return; // アプリ版は画面を消しても記録が続く
   try {
     if (on && 'wakeLock' in navigator && !wakeLock) {
       wakeLock = await navigator.wakeLock.request('screen');
@@ -271,7 +277,7 @@ function startTrack() {
   S.active = { id: uid(), start: Date.now(), paused: false, points: [] };
   activeLine.setLatLngs([]);
   saveActive(); keepAwake(true); setFollow(true);
-  toast('軌跡の記録を始めました。画面は消さずにお使いください');
+  toast(isNative ? '軌跡の記録を始めました。画面を消しても記録は続きます' : '軌跡の記録を始めました。画面は消さずにお使いください');
   renderPanel();
 }
 function pauseTrack() {
@@ -305,10 +311,7 @@ function gpx(track) {
   return `<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" creator="猟野ノート" xmlns="http://www.topografix.com/GPX/1/1"><trk><name>${esc(track.name)}</name><trkseg>${pts}</trkseg></trk></gpx>`;
 }
 function download(name, text, type) {
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([text], { type }));
-  a.download = name; document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  saveFile(name, text, type).catch(err => { console.error(err); toast('書き出せませんでした'); });
 }
 
 /* =========================================================
@@ -415,7 +418,7 @@ function placeStamp(latlng) {
   S.records.push(r);
   elevationAt(r.lat, r.lng).then(e => { if (e != null) { r.ele = Math.round(e); saveRecords(); } });
   saveRecords(); drawRecords(); renderPanel();
-  navigator.vibrate?.(30);
+  haptic('light');
   if (!warnRecord(r)) toast(`${TYPES[r.type].name}を置きました。ピンを押すとメモを書けます`);
 }
 map.on('click', e => {
@@ -864,7 +867,7 @@ function warnRecord(r) {
   const z = bad[0] || inside[0];
   const t = ZONE_TYPES[z.type];
   if (isTrap && t.ban.trap) {
-    navigator.vibrate?.([200, 100, 200]);
+    haptic('warn');
     toast(`⚠ この場所は${t.name}「${z.name || ''}」の中です。わなは設置できません(許可がある場合を除く)`, 7000);
   } else toast(`この場所は${t.name}「${z.name || ''}」の中です ・ ${t.rule}`, 5000);
   return true;
@@ -887,7 +890,11 @@ function checkZones() {
     banner.className = 'zonebanner in';
     banner.innerHTML = `<span class="z-ic">⚠</span><div>${esc(t.name)}「${esc(z.name || '名前なし')}」の中にいます<small>${esc(t.rule)}${inside.length > 1 ? ` ・ ほか${inside.length - 1}区域` : ''}</small></div>`;
     banner.hidden = false;
-    if (key !== S.zoneState) navigator.vibrate?.([300, 120, 300]);
+    if (key !== S.zoneState) {
+      haptic('warn');
+      // 画面を消しているとき(アプリ版)は通知で知らせる
+      if (document.visibilityState !== 'visible') notify(`⚠ ${t.name}に入りました`, `「${z.name || '名前なし'}」 ${t.rule}`);
+    }
   } else if (near.length) {
     const { zone: z, d } = near[0], t = ZONE_TYPES[z.type];
     banner.className = 'zonebanner near';
@@ -917,7 +924,7 @@ function startDraw() {
 }
 function addDrawPoint(ll) {
   S.draw.pts.push([+ll.lat.toFixed(6), +ll.lng.toFixed(6)]);
-  navigator.vibrate?.(15);
+  haptic('light');
   updateDraw();
 }
 function updateDraw() {
@@ -1105,7 +1112,7 @@ refreshOverlays();
 renderTop();
 renderPanel();
 if (migratedCount) toast(`以前の版の記録${migratedCount}件を引き継ぎました`, 5000);
-if ('serviceWorker' in navigator) {
+if ('serviceWorker' in navigator && !isNative) {
   navigator.serviceWorker.register('./sw.js').then(reg => reg.update()).catch(err => console.warn('SW登録に失敗', err));
   // 新しい版が入ったら一度だけ読み直して最新にする
   let reloaded = false;

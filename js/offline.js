@@ -1,5 +1,7 @@
 // 範囲を指定して地理院タイルを端末に保存する
 import { LAYERS, tilesInBounds, tileUrl } from './geo.js';
+import { isNative } from './native.js';
+import { tileStore, fetchRetry } from './tilestore.js';
 
 export const OFFLINE_CACHE = 'b-tiles-offline-v1';
 const LEGACY_CACHES = ['tiles-offline-v1']; // A版で保存した地図
@@ -24,18 +26,21 @@ export function planArea(bounds, layerKeys, maxZoom) {
   return { urls, mb: kb / 1024 };
 }
 
-/** 保存を実行。signal で中止できる。地理院への負荷を抑えるため同時4本まで */
+/** 保存を実行。signal で中止できる。地理院への負荷を抑えるため同時4本まで
+ *  ブラウザ版は Cache Storage、アプリ版(iPhone)は IndexedDB に保存する */
 export async function downloadUrls(urls, { onProgress, signal } = {}) {
-  const cache = await caches.open(OFFLINE_CACHE);
+  const cache = isNative ? null : await caches.open(OFFLINE_CACHE);
+  const has = isNative ? u => tileStore.hasOffline(u) : u => cache.match(u).then(Boolean);
+  const put = isNative ? (u, res) => res.blob().then(b => tileStore.putOffline(u, b)) : (u, res) => cache.put(u, res);
   let done = 0, failed = 0, i = 0;
   async function worker() {
     while (i < urls.length) {
       if (signal?.aborted) return;
       const url = urls[i++];
       try {
-        if (!(await cache.match(url))) {
-          const res = await fetch(url, { mode: 'cors', signal });
-          if (res.ok) await cache.put(url, res);
+        if (!(await has(url))) {
+          const res = await fetchRetry(url, signal);
+          if (res.ok) await put(url, res);
           else if (res.status !== 404) failed++; // 404は海域など、タイルが存在しない場所
         }
       } catch (e) {
@@ -51,6 +56,7 @@ export async function downloadUrls(urls, { onProgress, signal } = {}) {
 }
 
 export async function deleteUrls(urls) {
+  if (isNative) { for (const u of urls) await tileStore.delOffline(u); return; }
   for (const name of [OFFLINE_CACHE, ...LEGACY_CACHES]) {
     if (!(await caches.has(name))) continue;
     const cache = await caches.open(name);

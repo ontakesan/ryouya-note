@@ -1,0 +1,49 @@
+# iPhone アプリがビルドできるかを GitHub の Mac で確かめる(署名なし・シミュレータ向け)。
+# 実機に入れるのは各自の Mac の Xcode で行う(docs/iphone.md)。
+name: iOS build check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'index.html'
+      - 'css/**'
+      - 'js/**'
+      - 'package.json'
+      - 'capacitor.config.json'
+      - 'scripts/**'
+      - 'assets/**'
+      - '.github/workflows/ios-build.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Prepare iOS project
+        run: bash scripts/ios-setup.sh --ci
+
+      - name: Check Info.plist
+        run: |
+          /usr/libexec/PlistBuddy -c "Print :UIBackgroundModes" ios/App/App/Info.plist
+          /usr/libexec/PlistBuddy -c "Print :NSLocationAlwaysAndWhenInUseUsageDescription" ios/App/App/Info.plist
+          test -f ios/App/App/public/vendor/leaflet/leaflet.js
+
+      - name: Build for simulator
+        run: |
+          xcodebuild -project ios/App/App.xcodeproj -scheme App \
+            -sdk iphonesimulator -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO build | tail -n 40
+          test "${PIPESTATUS[0]}" -eq 0

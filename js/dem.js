@@ -1,6 +1,7 @@
 // 地理院の標高タイル(dem_png, z14 ≒ 10mメッシュ)から標高を読む。
 // タイルはService Workerのキャッシュ経由で取れるので、ダウンロード済みの範囲ならオフラインでも動く。
 import { LAYERS, tileUrl, lon2tile, lat2tile } from './geo.js';
+import { getTileBlob } from './tilestore.js';
 
 const Z = 14;
 const tiles = new Map(); // "x/y" -> Promise<Uint8ClampedArray|null>
@@ -8,9 +9,9 @@ const MAX_TILES = 40;
 
 async function loadTile(x, y) {
   try {
-    const res = await fetch(tileUrl(LAYERS.dem.url, Z, x, y), { mode: 'cors' });
-    if (!res.ok) return null; // 海域などはタイルが無い
-    const bmp = await createImageBitmap(await res.blob(), { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
+    const blob = await getTileBlob(tileUrl(LAYERS.dem.url, Z, x, y));
+    if (!blob) return null; // 海域などはタイルが無い
+    const bmp = await createImageBitmap(blob, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
     const c = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(256, 256) : Object.assign(document.createElement('canvas'), { width: 256, height: 256 });
     const ctx = c.getContext('2d', { willReadFrequently: true });
     ctx.drawImage(bmp, 0, 0);
