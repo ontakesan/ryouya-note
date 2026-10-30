@@ -1,7 +1,7 @@
 // 猟野ノート Service Worker
 // ・アプリ本体: 先に保存し、裏で更新(stale-while-revalidate)
 // ・地理院タイル: 端末にあればそれを使い、無ければ取りに行って閲覧キャッシュに入れる
-const VERSION = 'v1.0.0';
+const VERSION = 'v1.1.0';
 const SHELL = `shell-${VERSION}`;
 const BROWSE = 'tiles-browse-v1';
 const BROWSE_MAX = 3000;
@@ -15,7 +15,8 @@ const ASSETS = [
 ];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(SHELL).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  // cache:'reload' で、ブラウザに残った古いファイルではなく必ず最新を取る
+  e.waitUntil(caches.open(SHELL).then(c => c.addAll(ASSETS.map(u => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', e => {

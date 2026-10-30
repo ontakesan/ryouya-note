@@ -24,7 +24,7 @@
 
   <main class="stage">
     <div id="map" aria-label="地図"></div>
-    <div class="crosshair" id="crosshair" hidden aria-hidden="true"></div>
+    <div class="stampbar" id="stampBar" role="toolbar" aria-label="スタンプ"></div>
 
     <div class="fabs">
       <button class="fab" id="btnLayers" aria-label="地図の種類" aria-expanded="false">
@@ -33,7 +33,7 @@
       <button class="fab" id="btnLocate" aria-label="現在地" aria-pressed="false">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3"/></svg>
       </button>
-      <button class="fab primary" id="btnAdd" aria-label="地点を記録">
+      <button class="fab primary" id="btnAdd" aria-label="メモつきで記録">
         <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
       </button>
     </div>
@@ -49,11 +49,10 @@
     </div>
 
     <div class="addbar" id="addBar" hidden>
-      <div class="addtitle">十字の位置、または現在地に記録します</div>
+      <div class="addtitle" id="addTitle"></div>
       <div class="addacts">
         <button class="btn ghost" id="addCancel">やめる</button>
-        <button class="btn" id="addHere">現在地に記録</button>
-        <button class="btn primary" id="addCenter">十字の位置に記録</button>
+        <button class="btn primary" id="addHere">現在地に押す</button>
       </div>
     </div>
 
@@ -78,7 +77,8 @@
       <h2 id="pinTitle">地点を記録</h2>
       <span class="mono" id="pinMeta"></span>
     </div>
-    <fieldset class="types" id="pinTypes"><legend class="label">種類</legend></fieldset>
+    <div><div class="label" id="pinTypesLabel">種類</div>
+      <div class="types" id="pinTypes" role="radiogroup" aria-labelledby="pinTypesLabel"></div></div>
     <label for="pinAnimal">対象獣
       <select id="pinAnimal"><option>イノシシ</option><option>ニホンジカ</option><option>その他</option></select>
     </label>

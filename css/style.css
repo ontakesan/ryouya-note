@@ -40,10 +40,16 @@ button{font:inherit;color:inherit}
 #map{position:absolute;inset:0;background:var(--paper-2)}
 .leaflet-container{font-family:var(--f-body)}
 .leaflet-control-attribution{font-size:10px}
-.crosshair{position:absolute;left:50%;top:50%;width:36px;height:36px;margin:-18px 0 0 -18px;pointer-events:none;z-index:500}
-.crosshair::before,.crosshair::after{content:"";position:absolute;background:var(--blaze);box-shadow:0 0 0 1px #fff}
-.crosshair::before{left:17px;top:0;width:2px;height:36px}
-.crosshair::after{top:17px;left:0;height:2px;width:36px}
+/* スタンプ: 地図の上に横並び。選んで地図をタップすると置ける */
+.stampbar{position:absolute;left:0;right:0;top:0;z-index:1100;display:flex;gap:6px;overflow-x:auto;overscroll-behavior-x:contain;
+  padding:8px max(12px,var(--safe-r)) 8px max(12px,var(--safe-l));scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.stampbar::-webkit-scrollbar{display:none}
+.stamp{flex:none;display:flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--panel);border-radius:99px;
+  padding:7px 12px;font-weight:700;font-size:14px;box-shadow:0 1px 4px rgba(0,0,0,.18);cursor:pointer;touch-action:manipulation}
+.stamp i{width:12px;height:12px;border-radius:50%;flex:none}
+.stamp[aria-pressed="true"]{background:var(--ink);color:var(--paper);border-color:var(--ink);box-shadow:0 0 0 3px var(--blaze)}
+.stamp:focus-visible{outline:3px solid var(--blaze);outline-offset:2px}
+.stage.stamping #map{cursor:crosshair}
 
 .fabs{position:absolute;right:max(12px,var(--safe-r));bottom:24px;z-index:600;display:flex;flex-direction:column;gap:10px}
 .fab{width:48px;height:48px;border-radius:12px;border:1px solid var(--line);background:var(--panel);display:grid;place-items:center;box-shadow:0 2px 8px rgba(0,0,0,.18);cursor:pointer}
@@ -60,7 +66,7 @@ button{font:inherit;color:inherit}
 .addtitle{font-size:13px;color:var(--ink-2)}
 .addacts{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
 
-.toast{position:absolute;left:50%;top:12px;transform:translateX(-50%);z-index:700;background:var(--ink);color:var(--paper);padding:8px 14px;border-radius:8px;font-size:13px;max-width:calc(100% - 32px);box-shadow:0 4px 12px rgba(0,0,0,.25)}
+.toast{position:absolute;left:50%;top:60px;transform:translateX(-50%);z-index:700;background:var(--ink);color:var(--paper);padding:8px 14px;border-radius:8px;font-size:13px;max-width:calc(100% - 32px);box-shadow:0 4px 12px rgba(0,0,0,.25)}
 
 /* マーカー */
 .pin{background:none;border:0}
@@ -130,12 +136,10 @@ dialog::backdrop{background:rgba(0,0,0,.4)}
 .dlg-head{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
 .dlg-head h2{flex:1}
 .dlg-head .mono{font-size:12px;color:var(--ink-2)}
-.types{border:0;padding:0;margin:0;display:flex;flex-wrap:wrap;gap:6px}
-.types legend{margin-bottom:6px}
-.types label{display:flex!important;align-items:center;gap:6px;border:1px solid var(--line);border-radius:99px;padding:5px 10px!important;font-weight:700;cursor:pointer}
-.types input{position:absolute;opacity:0;pointer-events:none}
-.types label:has(input:checked){background:var(--ink);color:var(--paper);border-color:var(--ink)}
-.types label:has(input:focus-visible){outline:3px solid var(--blaze)}
+.types{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.types button{display:flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--paper);border-radius:99px;padding:6px 11px;font-weight:700;font-size:14px;cursor:pointer;touch-action:manipulation}
+.types button[aria-checked="true"]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.types button:focus-visible{outline:3px solid var(--blaze);outline-offset:2px}
 .types i{width:10px;height:10px;border-radius:50%}
 .dlg-acts{display:flex;gap:8px;align-items:center}
 .grow{flex:1}

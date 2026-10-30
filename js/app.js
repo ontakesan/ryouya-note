@@ -31,7 +31,7 @@ const S = {
   areas: store.get('areas', []),            // オフライン保存した範囲
   settings: store.get('settings', { base: 'std', hillshade: true, showAreas: false }),
   pos: null, follow: false, watchId: null,
-  view: 'track', editing: null, addMode: false, dl: null,
+  view: 'track', editing: null, stamp: null, dl: null,
 };
 const saveRecords = () => store.set('records', S.records);
 const saveTracks = () => store.set('tracks', S.tracks);
@@ -162,6 +162,7 @@ function onPos(p) {
   }
   if (S.follow || first) map.setView([lat, lng], Math.max(map.getZoom(), first ? 15 : 0), { animate: !first });
   if (S.active && !S.active.paused) addTrackPoint(S.pos);
+  if (S.stamp) $('#addHere').disabled = false;
   renderTop();
   throttledPanel();
 }
@@ -297,37 +298,51 @@ function drawRecords() {
   $('#trapBadge').textContent = S.records.filter(r => TYPES[r.type]?.trap && Date.now() - r.checked > 24 * HOUR).length || '';
 }
 
+/* 編集ダイアログの「種類」ボタン(iPhoneでも確実に反応するよう、ラジオではなくボタン) */
 const typeBox = $('#pinTypes');
+let dlgType = 'kukuri';
 for (const [k, t] of Object.entries(TYPES)) {
   typeBox.insertAdjacentHTML('beforeend',
-    `<label><input type="radio" name="ptype" value="${k}" id="pt-${k}"><i style="background:${t.color}"></i>${t.name}</label>`);
+    `<button type="button" role="radio" aria-checked="false" data-type="${k}"><i style="background:${t.color}"></i>${t.name}</button>`);
 }
+function setDlgType(k) {
+  dlgType = k;
+  typeBox.querySelectorAll('button').forEach(b => b.setAttribute('aria-checked', String(b.dataset.type === k)));
+}
+typeBox.addEventListener('click', e => { const b = e.target.closest('button[data-type]'); if (b) setDlgType(b.dataset.type); });
 
 let lastType = store.get('lastType', 'kukuri');
+let lastAnimal = store.get('lastAnimal', 'イノシシ');
+function newRecord(type, latlng) {
+  const r = { id: uid(), type, lat: +latlng.lat.toFixed(6), lng: +latlng.lng.toFixed(6), animal: lastAnimal, note: '', at: Date.now() };
+  if (TYPES[type].trap) { r.set = Date.now(); r.checked = Date.now(); }
+  return r;
+}
 function openPin(rec, latlng) {
   const isNew = !rec;
-  S.editing = rec || { id: uid(), type: lastType, lat: latlng.lat, lng: latlng.lng, animal: 'イノシシ', note: '', at: Date.now(), _new: true };
+  S.editing = rec || { ...newRecord(lastType, latlng), _new: true };
   const r = S.editing;
   $('#pinTitle').textContent = isNew ? '地点を記録' : TYPES[r.type].name;
-  $(`#pt-${r.type}`).checked = true;
+  setDlgType(r.type);
   $('#pinAnimal').value = r.animal;
   $('#pinNote').value = r.note || '';
   $('#pinDelete').hidden = isNew;
   const meta = $('#pinMeta');
-  meta.textContent = `${r.lat.toFixed(5)}, ${r.lng.toFixed(5)}`;
-  elevationAt(r.lat, r.lng).then(e => { if (e != null && S.editing === r) { r.ele = Math.round(e); meta.textContent += ` ・標高 ${r.ele}m`; } });
+  meta.textContent = `${r.lat.toFixed(5)}, ${r.lng.toFixed(5)}${r.ele != null ? ` ・標高 ${r.ele}m` : ''}`;
+  if (r.ele == null) elevationAt(r.lat, r.lng).then(e => { if (e != null && S.editing === r) { r.ele = Math.round(e); meta.textContent += ` ・標高 ${r.ele}m`; } });
   $('#pinDialog').showModal();
 }
 $('#pinForm').addEventListener('submit', e => {
   e.preventDefault();
-  const r = S.editing;
-  r.type = $('input[name=ptype]:checked').value;
+  const r = S.editing; if (!r) return;
+  r.type = dlgType;
   r.animal = $('#pinAnimal').value;
   r.note = $('#pinNote').value.trim();
   if (TYPES[r.type].trap) { r.set ??= Date.now(); r.checked ??= Date.now(); }
   if (r._new) { delete r._new; S.records.push(r); lastType = r.type; store.set('lastType', lastType); }
+  lastAnimal = r.animal; store.set('lastAnimal', lastAnimal);
   saveRecords(); drawRecords(); $('#pinDialog').close(); renderPanel();
-  toast(`${TYPES[r.type].name}を記録しました`);
+  toast(`${TYPES[r.type].name}を保存しました`);
 });
 $('#pinCancel').onclick = () => $('#pinDialog').close();
 $('#pinDelete').onclick = () => {
@@ -338,16 +353,49 @@ $('#pinDelete').onclick = () => {
 };
 $('#pinDialog').addEventListener('close', () => { const b = $('#pinDelete'); b.dataset.armed = ''; b.textContent = '削除'; S.editing = null; });
 
-/* 追加モード: 十字 or 現在地 / 地図の長押しでも追加 */
-function setAddMode(on) {
-  S.addMode = on;
-  $('#crosshair').hidden = !on; $('#addBar').hidden = !on;
-  $('#addHere').disabled = !S.pos;
+/* スタンプ: 上の列から選び、地図をタップするとその場に置く(もう一度押すと解除) */
+const stampBar = $('#stampBar');
+for (const [k, t] of Object.entries(TYPES)) {
+  stampBar.insertAdjacentHTML('beforeend',
+    `<button class="stamp" data-stamp="${k}" aria-pressed="false"><i style="background:${t.color}"></i>${t.name}</button>`);
 }
-$('#btnAdd').onclick = () => { setAddMode(!S.addMode); if (S.addMode) startGPS(); };
-$('#addCancel').onclick = () => setAddMode(false);
-$('#addCenter').onclick = () => { setAddMode(false); openPin(null, map.getCenter()); };
-$('#addHere').onclick = () => { if (!S.pos) return; setAddMode(false); openPin(null, { lat: S.pos.lat, lng: S.pos.lng }); };
+function setStamp(k) {
+  S.stamp = k;
+  stampBar.querySelectorAll('.stamp').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.stamp === k)));
+  $('.stage').classList.toggle('stamping', !!k);
+  $('#addBar').hidden = !k;
+  if (k) {
+    $('#addTitle').textContent = `地図をタップすると「${TYPES[k].name}」を置きます`;
+    $('#addHere').disabled = !S.pos;
+    $('#layerMenu').hidden = true;
+    startGPS();
+  }
+}
+stampBar.addEventListener('click', e => {
+  const b = e.target.closest('.stamp'); if (!b) return;
+  setStamp(S.stamp === b.dataset.stamp ? null : b.dataset.stamp);
+});
+// 同じ場所での連打や、地図を動かした直後の誤タップを防ぐ
+let lastStampAt = 0;
+function placeStamp(latlng) {
+  if (Date.now() - lastStampAt < 600) return;
+  lastStampAt = Date.now();
+  const r = newRecord(S.stamp, latlng);
+  S.records.push(r);
+  elevationAt(r.lat, r.lng).then(e => { if (e != null) { r.ele = Math.round(e); saveRecords(); } });
+  saveRecords(); drawRecords(); renderPanel();
+  navigator.vibrate?.(30);
+  toast(`${TYPES[r.type].name}を置きました。ピンを押すとメモを書けます`);
+}
+map.on('click', e => { if (S.stamp) placeStamp(e.latlng); });
+$('#addCancel').onclick = () => setStamp(null);
+$('#addHere').onclick = () => { if (S.stamp && S.pos) placeStamp({ lat: S.pos.lat, lng: S.pos.lng }); };
+
+/* ＋ボタン: 現在地(なければ地図の中心)にメモつきで記録 / 地図の長押しでも同じ */
+$('#btnAdd').onclick = () => {
+  startGPS();
+  openPin(null, S.pos ? { lat: S.pos.lat, lng: S.pos.lng } : map.getCenter());
+};
 map.on('contextmenu', e => openPin(null, e.latlng));
 drawRecords();
 
@@ -600,7 +648,14 @@ view.addEventListener('click', async e => {
 renderTop();
 renderPanel();
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('./sw.js').catch(err => console.warn('SW登録に失敗', err));
+  navigator.serviceWorker.register('./sw.js').then(reg => reg.update()).catch(err => console.warn('SW登録に失敗', err));
+  // 新しい版が入ったら一度だけ読み直して最新にする
+  let reloaded = false;
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || reloaded) return;
+    reloaded = true; location.reload();
+  });
 }
 if (location.protocol === 'http:' && !['localhost', '127.0.0.1'].includes(location.hostname)) {
   toast('GPSとオフライン保存には https での公開が必要です', 8000);
