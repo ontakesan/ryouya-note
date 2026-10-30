@@ -47,11 +47,24 @@ const map = L.map('map', { zoomControl: false, minZoom: 5, maxZoom: 18, tapHold:
 L.control.scale({ imperial: false, position: 'bottomleft' }).addTo(map);
 map.attributionControl.setPrefix(false);
 
-const tile = key => L.tileLayer(LAYERS[key].url, {
+// 読み込みに失敗した地図画像は、少し待って最大3回まで取り直す(電波の弱い山中や、サーバー混雑への対策)
+function retryTiles(layer) {
+  layer.on('tileerror', ({ tile, coords }) => {
+    const n = +(tile.dataset.retry || 0);
+    if (n >= 3) return;
+    tile.dataset.retry = n + 1;
+    const src = layer.getTileUrl(coords);
+    setTimeout(() => { tile.src = ''; tile.src = src; }, 1500 * (n + 1));
+  });
+  return layer;
+}
+const tile = key => retryTiles(L.tileLayer(LAYERS[key].url, {
   minZoom: 5, maxZoom: 18, maxNativeZoom: LAYERS[key].max, attribution: ATTRIBUTION, crossOrigin: 'anonymous',
-});
+}));
 const bases = { std: tile('std'), pale: tile('pale'), photo: tile('photo') };
-const hillshade = L.tileLayer(LAYERS.hillshade.url, { maxZoom: 18, maxNativeZoom: 16, opacity: 0.35, crossOrigin: 'anonymous' });
+const hillshade = retryTiles(L.tileLayer(LAYERS.hillshade.url, { maxZoom: 18, maxNativeZoom: 16, opacity: 0.35, crossOrigin: 'anonymous' }));
+// 電波が戻ったら、欠けている地図を取り直す
+addEventListener('online', () => { Object.values(bases).forEach(l => map.hasLayer(l) && l.redraw()); if (map.hasLayer(hillshade)) hillshade.redraw(); });
 const areaLayer = L.layerGroup();
 const recordLayer = L.layerGroup().addTo(map);
 const trackLayer = L.layerGroup().addTo(map);

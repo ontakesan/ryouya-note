@@ -1,7 +1,7 @@
 // 猟野ノート Service Worker
 // ・アプリ本体: 先に保存し、裏で更新(stale-while-revalidate)
 // ・地理院タイル: 端末にあればそれを使い、無ければ取りに行って閲覧キャッシュに入れる
-const VERSION = 'v1.1.0';
+const VERSION = 'v1.2.0';
 const SHELL = `shell-${VERSION}`;
 const BROWSE = 'tiles-browse-v1';
 const BROWSE_MAX = 3000;
@@ -33,20 +33,49 @@ async function trimBrowse() {
   for (let i = 0; i < keys.length - BROWSE_MAX; i++) await c.delete(keys[i]);
 }
 
+// 地理院サーバーは一度に大量に頼むと 503(混雑)を返すことがあるので、
+// 同時に取りに行く数を絞り、断られたら少し待って取り直す
+const MAX_INFLIGHT = 6;
+let inflight = 0;
+const queue = [];
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function slot() {
+  if (inflight < MAX_INFLIGHT) { inflight++; return; }
+  await new Promise(r => queue.push(r));
+  inflight++;
+}
+function release() { inflight--; const next = queue.shift(); if (next) next(); }
+
+async function fetchTile(url) {
+  let last = null;
+  for (const wait of [0, 500, 1500, 3500]) {
+    if (wait) await sleep(wait + Math.random() * 300);
+    await slot();
+    try {
+      const res = await fetch(url, { mode: 'cors' });
+      // 成功、またはタイルが存在しない(海域など)ならそこで終わり
+      if (res.ok || res.status === 404) return res;
+      last = res;
+      if (res.status < 500 && res.status !== 429) return res; // 取り直しても無駄な失敗
+    } catch {
+      last = null; // 圏外など
+    } finally {
+      release();
+    }
+  }
+  return last || new Response('', { status: 504, statusText: 'offline' });
+}
+
 async function tile(req) {
   const hit = await caches.match(req.url); // オフライン保存分と閲覧キャッシュの両方を探す
   if (hit) return hit;
-  try {
-    const res = await fetch(req.url, { mode: 'cors' });
-    if (res.ok) {
-      const c = await caches.open(BROWSE);
-      c.put(req.url, res.clone());
-      if (++putsSinceTrim > 100) { putsSinceTrim = 0; trimBrowse(); }
-    }
-    return res;
-  } catch {
-    return new Response('', { status: 504, statusText: 'offline' });
+  const res = await fetchTile(req.url);
+  if (res.ok) {
+    const c = await caches.open(BROWSE);
+    c.put(req.url, res.clone());
+    if (++putsSinceTrim > 100) { putsSinceTrim = 0; trimBrowse(); }
   }
+  return res;
 }
 
 async function shell(req) {
