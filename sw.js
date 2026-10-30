@@ -1,7 +1,7 @@
 // 猟野ノート Service Worker
 // ・アプリ本体: 先に保存し、裏で更新(stale-while-revalidate)
 // ・地理院タイル: 端末にあればそれを使い、無ければ取りに行って閲覧キャッシュに入れる
-const VERSION = 'v1.2.0';
+const VERSION = 'v1.2.1';
 const SHELL = `shell-${VERSION}`;
 const BROWSE = 'tiles-browse-v1';
 const BROWSE_MAX = 3000;
@@ -89,6 +89,8 @@ self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
+  // B版(b/)は自分のService Workerで動くので、A版は関わらない
+  if (url.origin === location.origin && url.pathname.startsWith(new URL('./b/', self.registration.scope).pathname)) return;
   if (url.hostname === 'cyberjapandata.gsi.go.jp') e.respondWith(tile(req));
   else if (url.origin === location.origin || url.hostname === 'unpkg.com') e.respondWith(shell(req));
 });

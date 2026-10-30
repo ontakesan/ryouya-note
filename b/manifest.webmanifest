@@ -1,0 +1,18 @@
+{
+  "name": "猟野ノート B",
+  "short_name": "猟野B",
+  "description": "狩猟のための地図・GPS記録アプリ。罠・痕跡・捕獲を記録し、圏外でも地図が使える。",
+  "id": "./?app=b",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#1f2a1f",
+  "theme_color": "#1f2a1f",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
