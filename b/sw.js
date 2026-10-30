@@ -1,7 +1,7 @@
 // 猟野ノート B版 Service Worker (scope: /b/)
 // ・アプリ本体: 先に保存し、裏で更新(stale-while-revalidate)
 // ・地理院タイル: 端末にあればそれを使い、無ければ取りに行って閲覧キャッシュに入れる
-const VERSION = 'v1.0.2';
+const VERSION = 'v1.1.0';
 const SHELL = `b-shell-${VERSION}`;
 const BROWSE = 'b-tiles-browse-v1';
 const BROWSE_MAX = 3000;
@@ -9,7 +9,7 @@ const BROWSE_MAX = 3000;
 const ASSETS = [
   './', './index.html', './manifest.webmanifest', './css/style.css',
   './js/app.js', './js/geo.js', './js/dem.js', './js/sun.js', './js/store.js', './js/offline.js',
-  './js/idb.js', './js/seasons.js', './js/hmap.js',
+  './js/idb.js', './js/seasons.js', './js/hmap.js', './js/kumamoto-sheets.js',
   './icons/icon-192.png', './icons/icon-512.png',
   'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
   'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',

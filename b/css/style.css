@@ -202,3 +202,8 @@ body.calibrating{overflow:hidden}
 .cmark span{display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:#2b6cb0;color:#fff;font-weight:900;font-size:12px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4)}
 .calib-foot{display:flex;align-items:center;gap:8px}
 .calib-foot .big{flex:none}
+
+.steps{margin:0;padding-left:1.3em;font-size:13px;color:var(--ink-2);display:grid;gap:2px}
+a.btn{text-decoration:none;color:var(--ink);display:inline-block}
+#sheetForm{display:grid;gap:12px;padding:16px}
+#sheetForm label{font-size:13px;font-weight:700;display:grid;gap:4px}

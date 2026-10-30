@@ -114,8 +114,23 @@
   </form>
 </dialog>
 
-<input type="file" id="hmapFile" accept="image/*" hidden>
+<input type="file" id="hmapFile" accept="image/*" multiple hidden>
 <input type="file" id="zoneFile" accept=".geojson,.json,application/geo+json,application/json" hidden>
+
+<dialog id="sheetDialog">
+  <form method="dialog" id="sheetForm">
+    <div class="dlg-head"><h2>どの地図ですか?</h2></div>
+    <p class="note" id="sheetFile"></p>
+    <label for="sheetPick">ハンターマップのページ
+      <select id="sheetPick"></select>
+    </label>
+    <p class="note">選ぶと、画像の中の格子線(メッシュの線)を探して自動で位置を合わせます。熊本県の地図でなければ「手で合わせる」を選んでください。</p>
+    <div class="dlg-acts"><span class="grow"></span>
+      <button type="button" class="btn ghost" id="sheetCancel">取り込まない</button>
+      <button type="submit" class="btn primary">決定</button>
+    </div>
+  </form>
+</dialog>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 <script type="module" src="js/app.js"></script>

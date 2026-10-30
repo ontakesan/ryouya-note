@@ -3,7 +3,8 @@ import { elevationAt } from './dem.js';
 import { sunTimes, hhmm, span } from './sun.js';
 import { store, uid, migrateFromA } from './store.js';
 import { seasonStatus, animalOpen, PREFS } from './seasons.js';
-import { ZONE_TYPES, geoImageLayer, shrinkImage, openCalibrator, zonesAt, inPolygon } from './hmap.js';
+import { ZONE_TYPES, geoImageLayer, shrinkImage, openCalibrator, zonesAt, inPolygon, solveAffine, bboxOf } from './hmap.js';
+import { SHEETS, SOURCE_PAGE, identify, gridPairs, refineGrid } from './kumamoto-sheets.js';
 import { putImage, getImage, delImage } from './idb.js';
 import * as off from './offline.js';
 
@@ -99,6 +100,7 @@ map.on('moveend', () => {
   if (S.view === 'offline') renderOfflinePlan();
 });
 map.on('dragstart', () => { if (S.follow) setFollow(false); });
+map.on('moveend', () => { if (overlaysReady) drawSheets(); });
 
 /* レイヤーメニュー */
 $('#btnLayers').onclick = () => {
@@ -687,10 +689,16 @@ async function sheetUrl(sh) {
   sheetLayers.set(sh.id, { ...(sheetLayers.get(sh.id) || {}), url });
   return url;
 }
+const MAX_SHOWN = 3; // 大きな画像を一度に重ねすぎるとスマホで落ちるので、画面に近い順に3枚まで
 async function drawSheets() {
+  const b = map.getBounds().pad(0.3), c = map.getCenter();
+  const near = S.sheets
+    .filter(sh => sh.visible && sh.M && (!sh.bbox || b.intersects([[sh.bbox[0], sh.bbox[1]], [sh.bbox[2], sh.bbox[3]]])))
+    .map(sh => ({ sh, d: sh.bbox ? Math.hypot((sh.bbox[0] + sh.bbox[2]) / 2 - c.lat, (sh.bbox[1] + sh.bbox[3]) / 2 - c.lng) : 0 }))
+    .sort((x, y) => x.d - y.d).slice(0, MAX_SHOWN).map(x => x.sh.id);
   for (const sh of S.sheets) {
     const entry = sheetLayers.get(sh.id);
-    const want = S.settings.showHmap && sh.visible && sh.M;
+    const want = S.settings.showHmap && near.includes(sh.id);
     if (entry?.layer && (!want || entry.M !== sh.M)) { map.removeLayer(entry.layer); entry.layer = null; }
     if (want && !sheetLayers.get(sh.id)?.layer) {
       const url = await sheetUrl(sh);
@@ -708,20 +716,82 @@ async function drawSheets() {
 }
 const saveSheets = () => store.set('sheets', S.sheets);
 
+/* 取り込み: 熊本県の地図なら自動で位置合わせ。まとめて選べる */
+function askSheet(fileName) {
+  return new Promise(resolve => {
+    const dlg = $('#sheetDialog');
+    $('#sheetFile').textContent = `「${fileName}」は、どのページの地図ですか?`;
+    $('#sheetPick').innerHTML = SHEETS.map(sh => `<option value="${sh.id}">${esc(sh.title)}</option>`).join('') + '<option value="">熊本県の地図ではない(手で合わせる)</option>';
+    const done = v => { dlg.close(); resolve(v); };
+    $('#sheetForm').onsubmit = e => { e.preventDefault(); done($('#sheetPick').value || 'manual'); };
+    $('#sheetCancel').onclick = () => done(null);
+    dlg.showModal();
+  });
+}
+function finishSheet(sh, pairs, how) {
+  const sol = solveAffine(pairs);
+  if (!sol) return false;
+  sh.pairs = pairs.map(p => ({ u: +p.u.toFixed(1), v: +p.v.toFixed(1), lat: +p.lat.toFixed(7), lng: +p.lng.toFixed(7) }));
+  sh.M = sol.M; sh.rms = sol.rms; sh.auto = how; sh.visible = true;
+  sh.bbox = bboxOf(sol.M, sh.w, sh.h);
+  return true;
+}
+async function importFile(file) {
+  const found = await identify(file);
+  let sheetDef = found?.sheet || null, how = found?.how || null;
+  if (!sheetDef) {
+    const pick = await askSheet(file.name);
+    if (pick === null) return null;
+    sheetDef = pick === 'manual' ? null : SHEETS.find(s => s.id === pick);
+    how = sheetDef ? 'grid' : null;
+  }
+  const { blob, w, h, canvas, scale } = await shrinkImage(file);
+  const sh = { id: uid(), name: sheetDef ? sheetDef.title : file.name.replace(/\.[^.]+$/, ''), sheetId: sheetDef?.id || null,
+    w, h, M: null, pairs: [], opacity: 0.6, visible: true, at: Date.now() };
+  let ok = false, note = '';
+  if (sheetDef) {
+    const k = (w / sheetDef.w + h / sheetDef.h) / 2;
+    const sameShape = Math.abs(w / h - sheetDef.w / sheetDef.h) < 0.01;
+    if (how === 'exact') ok = finishSheet(sh, gridPairs(sheetDef, k), 'exact');
+    else if (sameShape) {
+      // 県の元ファイルと違う(新しい年度・再保存など)→ 画像の格子線を探し直す
+      const r = refineGrid(canvas, sheetDef, k);
+      if (r) { ok = finishSheet(sh, r.pairs, 'grid'); note = `格子線 ${r.found[0] + r.found[1]}/${r.expected[0] + r.expected[1]}本を検出`; }
+      if (!ok) { ok = finishSheet(sh, gridPairs(sheetDef, k), 'layout'); note = '格子線を見つけられなかったため、令和7年度版の配置で合わせました'; }
+    } else note = '画像の縦横の比率が県の地図と違います(切り抜き・スクリーンショットなど)';
+  }
+  canvas.width = canvas.height = 0; // メモリを返す
+  // 同じページの古い取り込みは置き換える
+  if (sh.sheetId) for (const old of S.sheets.filter(x => x.sheetId === sh.sheetId)) {
+    S.sheets = S.sheets.filter(x => x !== old); await delImage(old.id).catch(() => {});
+  }
+  await putImage(sh.id, blob);
+  S.sheets.push(sh);
+  return { sh, ok, note };
+}
 $('#hmapFile').addEventListener('change', async e => {
-  const file = e.target.files[0]; e.target.value = '';
-  if (!file) return;
-  toast('画像を取り込んでいます…', 8000);
-  try {
-    const { blob, w, h } = await shrinkImage(file);
-    const sh = { id: uid(), name: file.name.replace(/\.[^.]+$/, ''), w, h, M: null, pairs: [], opacity: 0.6, visible: true, at: Date.now() };
-    await putImage(sh.id, blob);
-    S.sheets.push(sh); saveSheets();
-    renderPanel();
-    calibrate(sh);
-  } catch (err) {
-    console.error(err);
-    toast('画像を取り込めませんでした。JPGかPNGの画像を選んでください(PDFは不可)', 6000);
+  const files = [...e.target.files]; e.target.value = '';
+  if (!files.length) return;
+  const results = [];
+  for (const [i, file] of files.entries()) {
+    toast(`取り込み中 ${i + 1}/${files.length}: ${file.name}`, 20000);
+    try { const r = await importFile(file); if (r) results.push(r); }
+    catch (err) { console.error(err); toast(`「${file.name}」を取り込めませんでした。JPGかPNGの画像を選んでください(PDFは不可)`, 6000); }
+  }
+  saveSheets();
+  S.settings.showHmap = true; saveSettings(); applyLayers();
+  const okOnes = results.filter(r => r.ok), manual = results.filter(r => !r.ok);
+  if (okOnes.length) {
+    const sh = okOnes[0].sh, bb = sh.bbox;
+    setFollow(false);
+    map.fitBounds([[bb[0], bb[1]], [bb[2], bb[3]]]);
+    const notes = okOnes.map(r => r.note).filter(Boolean);
+    toast(`${okOnes.length}枚を自動で位置合わせしました${notes.length ? `(${notes[0]})` : ''}`, 6000);
+  }
+  await drawSheets(); renderPanel();
+  if (manual.length) {
+    if (manual[0].note) toast(manual[0].note + '。手で位置を合わせてください', 6000);
+    calibrate(manual[0].sh);
   }
 });
 async function calibrate(sh) {
@@ -732,7 +802,8 @@ async function calibrate(sh) {
   openCalibrator({
     url, w: sh.w, h: sh.h, pairs: sh.pairs, center: pc, title: sh.name,
     onDone({ pairs, M, rms }) {
-      sh.pairs = pairs; sh.M = M; sh.rms = pairs.length > 3 ? rms : null; sh.visible = true;
+      sh.pairs = pairs; sh.M = M; sh.rms = pairs.length > 3 ? rms : null; sh.visible = true; sh.auto = null;
+      sh.bbox = bboxOf(M, sh.w, sh.h);
       S.settings.showHmap = true; saveSettings();
       saveSheets(); drawSheets(); renderPanel();
       // 画像の中心あたりへ移動
@@ -900,8 +971,31 @@ function V_zones() {
   const se = seasonStatus(new Date(), PREF);
   view.innerHTML = `
     <div><h2>ハンターマップ</h2>
-      <p class="note">${P.name}の鳥獣保護区等位置図(JPG)を取り込み、地図に重ねます。<a class="link" href="${P.hunterMap}" target="_blank" rel="noopener">県のページを開く</a>でJPGを保存してから取り込んでください。PDFはスクリーンショットにすると取り込めます。</p></div>
-    <div class="list">${S.sheets.map(sh => `
+      <p class="note">県の鳥獣保護区等位置図を取り込むと、<b>自動で位置を合わせて</b>地図に重ねます。</p></div>
+    <ol class="steps">
+      <li>下の一覧で、猟場が載っているページの「画像を開く」を押す</li>
+      <li>開いた画像を長押しして保存する(iPhoneは「"写真"に保存」、Androidは「画像をダウンロード」)</li>
+      <li>「保存した画像を取り込む」を押して選ぶ(何枚でもまとめて選べます)</li>
+    </ol>
+    <div class="list">${SHEETS.map(def => {
+      const sh = S.sheets.find(x => x.sheetId === def.id);
+      return `<div class="sheetrow">
+        ${sh ? `<img class="thumb" data-thumb="${sh.id}" alt="">` : '<div class="thumb"></div>'}
+        <div style="min-width:0">
+          <div class="t">${esc(def.title)}</div>
+          <div class="m">${sh ? (sh.M ? `取り込み済み ・ ${sh.auto ? '自動' : '手動'}で位置合わせ${sh.rms != null ? ` ・ 誤差 約${Math.round(sh.rms)}m` : ''}` : '<span style="color:var(--bad)">位置合わせがまだです</span>') : 'まだ取り込んでいません'}</div>
+          ${sh?.M ? `<label class="slider" for="op-${sh.id}">透明度<input type="range" id="op-${sh.id}" min="0.1" max="1" step="0.05" value="${sh.opacity}" data-op="${sh.id}"></label>` : ''}
+          <div class="acts">
+            ${sh ? `
+              ${sh.M ? `<button class="btn" data-z="go" data-id="${sh.id}">地図で見る</button><button class="btn ghost" data-z="vis" data-id="${sh.id}">${sh.visible ? '隠す' : '表示'}</button>` : `<button class="btn primary" data-z="cal" data-id="${sh.id}">位置合わせ</button>`}
+              <button class="btn ghost danger" data-z="delsheet" data-id="${sh.id}">削除</button>`
+            : `<a class="btn" href="${def.url}" target="_blank" rel="noopener">画像を開く</a>`}
+          </div>
+        </div>
+      </div>`;
+    }).join('')}</div>
+    <div class="btnrow"><button class="btn primary big" data-z="import">保存した画像を取り込む</button></div>
+    ${S.sheets.some(x => !x.sheetId) ? `<div><div class="label">ほかの地図</div><div class="list">${S.sheets.filter(x => !x.sheetId).map(sh => `
       <div class="sheetrow">
         <img class="thumb" data-thumb="${sh.id}" alt="">
         <div style="min-width:0">
@@ -914,8 +1008,8 @@ function V_zones() {
             <button class="btn ghost danger" data-z="delsheet" data-id="${sh.id}">削除</button>
           </div>
         </div>
-      </div>`).join('') || '<div class="empty">まだありません。</div>'}</div>
-    <div class="btnrow"><button class="btn primary big" data-z="import">ハンターマップの画像を取り込む</button></div>
+      </div>`).join('')}</div></div>` : ''}
+    <p class="note">地図: <a class="link" href="${SOURCE_PAGE}" target="_blank" rel="noopener">熊本県 鳥獣保護区等位置図</a>(令和7年度版に対応。新しい年度版も格子線を探して合わせます)。画像は県の著作物のため、各自で保存して取り込む方式にしています。</p>
 
     <div><h2>区域</h2><p class="note">保護区や銃猟禁止区域を登録すると、中に入ったときと150m以内に近づいたときに知らせます。わなを置こうとした場所が禁止区域なら警告します。</p></div>
     <div class="legend-z">${Object.values(ZONE_TYPES).map(t => `<span><i class="zsw" style="color:${t.color};background:${t.color}33"></i>${t.name}</span>`).join('')}</div>
@@ -961,6 +1055,13 @@ view.addEventListener('click', async e => {
   else if (act === 'exportzone') exportZones();
   else if (act === 'draw') startDraw();
   else if (act === 'cal') calibrate(S.sheets.find(s => s.id === id));
+  else if (act === 'go') {
+    const sh = S.sheets.find(s => s.id === id), bb = sh.bbox || bboxOf(sh.M, sh.w, sh.h);
+    sh.visible = true; S.settings.showHmap = true; saveSettings(); applyLayers(); saveSheets();
+    setFollow(false); map.fitBounds([[bb[0], bb[1]], [bb[2], bb[3]]]);
+    if (innerWidth < 860) sheet.dataset.open = 'false';
+    drawSheets();
+  }
   else if (act === 'vis') {
     const sh = S.sheets.find(s => s.id === id); sh.visible = !sh.visible;
     if (sh.visible) { S.settings.showHmap = true; saveSettings(); applyLayers(); }

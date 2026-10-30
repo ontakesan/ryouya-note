@@ -63,6 +63,14 @@ export function solveAffine(pairs) {
   return { M, rms, residuals: res };
 }
 
+/** 変換 M で画像の四隅がどこに来るか → 範囲 [南, 西, 北, 東] */
+export function bboxOf(M, w, h) {
+  const [a, b, c, d, e, f] = M;
+  const ll = [[0, 0], [w, 0], [0, h], [w, h]].map(([u, v]) =>
+    L.CRS.EPSG3857.pointToLatLng(L.point(a * u + c * v + e, b * u + d * v + f), Z0));
+  return [Math.min(...ll.map(p => p.lat)), Math.min(...ll.map(p => p.lng)), Math.max(...ll.map(p => p.lat)), Math.max(...ll.map(p => p.lng))];
+}
+
 /** 位置合わせ済みの画像を地図に重ねるレイヤー */
 export function geoImageLayer(url, w, h, M, opacity = 0.6) {
   const Layer = L.Layer.extend({
@@ -102,7 +110,7 @@ export async function shrinkImage(file, maxSide = 4000) {
   c.width = w; c.height = h;
   c.getContext('2d').drawImage(bmp, 0, 0, w, h);
   const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.85));
-  return { blob, w, h };
+  return { blob, w, h, canvas: c, scale: k };
 }
 
 /* ---------------------------------------------------------
