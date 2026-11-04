@@ -18,6 +18,17 @@ node -e '
   process.exit(ok ? 0 : 1);
 ' || fail "Node.js が古いか、セキュリティ修正前の版です(いま $(node -v))。https://nodejs.org/ja から最新の LTS 版を入れてください。"
 command -v xcodebuild >/dev/null || fail "Xcode が入っていません。App Store から Xcode を入れてください。"
+if xcode-select -p 2>/dev/null | grep -q CommandLineTools; then
+  if [ -d /Applications/Xcode.app ]; then
+    fail "Mac が Xcode 本体ではなく「コマンドラインツール」を使う設定になっています。次の3行を実行してから、もう一度このスクリプトを実行してください(1行目で Mac のパスワードを聞かれます。入力しても表示されません)。
+    sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+    sudo xcodebuild -license accept
+    xcodebuild -runFirstLaunch"
+  else
+    fail "Xcode 本体が入っていません。App Store から Xcode を入れて一度起動し、追加部品のインストールを済ませてから、もう一度実行してください。"
+  fi
+fi
+xcodebuild -version >/dev/null 2>&1 || fail "Xcode が使える状態になっていません。Xcode を一度起動して追加部品を入れ、ターミナルで「sudo xcodebuild -license accept」を実行してから、もう一度実行してください。"
 XCODE_MAJOR=$(xcodebuild -version | head -1 | sed -E 's/Xcode ([0-9]+).*/\1/')
 [ "$XCODE_MAJOR" -ge 26 ] || fail "Xcode が古いです(いま $(xcodebuild -version | head -1))。26 以上に更新してください。"
 echo "Node $(node -v) / $(xcodebuild -version | head -1)"
