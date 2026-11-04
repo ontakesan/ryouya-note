@@ -22,9 +22,9 @@ XCODE_MAJOR=$(xcodebuild -version | head -1 | sed -E 's/Xcode ([0-9]+).*/\1/')
 [ "$XCODE_MAJOR" -ge 26 ] || fail "Xcode が古いです(いま $(xcodebuild -version | head -1))。26 以上に更新してください。"
 echo "Node $(node -v) / $(xcodebuild -version | head -1)"
 
-step "部品をインストール(公開から14日以上たった版だけ・インストール時のプログラム実行なし)"
-# 乗っ取られた部品は公開直後に見つかって取り下げられることが多いので、出たばかりの版は避ける
-BEFORE=$(node -e 'console.log(new Date(Date.now() - 14 * 864e5).toISOString().slice(0, 10))')
+step "部品をインストール(公開から7日以上たった版だけ・インストール時のプログラム実行なし)"
+# 乗っ取られた部品はふつう数時間〜数日で見つかって取り下げられるので、出たばかりの版は避ける
+BEFORE=$(node -e 'console.log(new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10))')
 if [ -f package-lock.json ]; then
   npm ci            # 前回と同じ版をそのまま入れる
 else
