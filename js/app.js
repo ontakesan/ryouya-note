@@ -4,7 +4,7 @@ import { sunTimes, hhmm, span } from './sun.js';
 import { store, uid, migrateFromA } from './store.js';
 import { seasonStatus, animalOpen, PREFS } from './seasons.js';
 import { ZONE_TYPES, geoImageLayer, shrinkImage, openCalibrator, zonesAt, inPolygon, solveAffine, bboxOf } from './hmap.js';
-import { SHEETS, SOURCE_PAGE, identify, gridPairs, refineGrid } from './kumamoto-sheets.js';
+import { SHEETS, SOURCE_PAGE, identify, gridPairs, refineGrid, tokyoToJGD, DATUM_VERSION } from './kumamoto-sheets.js';
 import { putImage, getImage, delImage } from './idb.js';
 import * as off from './offline.js';
 import { isNative, haptic, notify, prepareNotifications, watchPosition, hasGeolocation, openLocationSettings, saveFile } from './native.js';
@@ -745,6 +745,22 @@ async function drawSheetsOnce() {
 }
 const saveSheets = () => store.set('sheets', S.sheets);
 
+// 以前の版で自動位置合わせした県の地図は、測地系の補正がなく南東へ数百mずれていた。
+// 保存してある交点を日本測地系→世界測地系に直して、合わせ直す
+(function fixDatum() {
+  let n = 0;
+  for (const sh of S.sheets) {
+    if (!sh.sheetId || !sh.auto || sh.datum === DATUM_VERSION || !sh.pairs?.length) continue;
+    const pairs = sh.pairs.map(p => ({ u: p.u, v: p.v, ...tokyoToJGD(p.lat, p.lng) }));
+    const sol = solveAffine(pairs);
+    if (!sol) continue;
+    sh.pairs = pairs.map(p => ({ u: p.u, v: p.v, lat: +p.lat.toFixed(7), lng: +p.lng.toFixed(7) }));
+    sh.M = sol.M; sh.rms = sol.rms; sh.bbox = bboxOf(sol.M, sh.w, sh.h); sh.datum = DATUM_VERSION;
+    n++;
+  }
+  if (n) { saveSheets(); setTimeout(() => toast(`ハンターマップ${n}枚の位置を補正しました(以前より南東に数百mずれていました)`, 6000), 1500); }
+})();
+
 /* 取り込み: 熊本県の地図なら自動で位置合わせ。まとめて選べる */
 function askSheet(fileName) {
   return new Promise(resolve => {
@@ -761,7 +777,7 @@ function finishSheet(sh, pairs, how) {
   const sol = solveAffine(pairs);
   if (!sol) return false;
   sh.pairs = pairs.map(p => ({ u: +p.u.toFixed(1), v: +p.v.toFixed(1), lat: +p.lat.toFixed(7), lng: +p.lng.toFixed(7) }));
-  sh.M = sol.M; sh.rms = sol.rms; sh.auto = how; sh.visible = true;
+  sh.M = sol.M; sh.rms = sol.rms; sh.auto = how; sh.visible = true; sh.datum = DATUM_VERSION;
   sh.bbox = bboxOf(sol.M, sh.w, sh.h);
   return true;
 }

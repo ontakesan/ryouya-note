@@ -8,6 +8,10 @@
 // ref = [基準マスの番号, そのマスの左の縦線が VX の何番目か, 下の横線が HY の何番目か]
 // angV / angH は格子線のわずかな傾き(度)。
 // 画像そのものは県の著作物なので、このアプリには含めない。利用者が県のサイトから保存して取り込む。
+//
+// 【測地系】県の地図は、格子線も含めて旧い「日本測地系」の地図の上に描かれている。
+// 格子線の緯度経度をそのまま今の「世界測地系」(地理院地図)に当てると、地物が南へ約370m・東へ約220m
+// ずれる(山鹿・長洲で確認)。そのため交点の緯度経度を日本測地系として扱い、世界測地系に変換してから合わせる。
 
 export const SOURCE_PAGE = 'https://www.pref.kumamoto.jp/soshiki/52/249903.html';
 const BASE = 'https://www.pref.kumamoto.jp/uploaded/attachment/';
@@ -46,6 +50,24 @@ export function meshSW(code) {
   };
 }
 
+/**
+ * 日本測地系(Bessel楕円体)の緯度経度 → 世界測地系(JGD2011/GRS80)。
+ * 3パラメータの Molodensky 変換。誤差は数m程度で、10万分の1の地図には十分
+ */
+export function tokyoToJGD(lat, lng) {
+  const d = Math.PI / 180, a = 6377397.155, f = 1 / 299.152813;
+  const da = 6378137 - a, df = 1 / 298.257222101 - f, dX = -146.414, dY = 507.337, dZ = 680.507;
+  const p = lat * d, l = lng * d, e2 = 2 * f - f * f, sp = Math.sin(p), cp = Math.cos(p), sl = Math.sin(l), cl = Math.cos(l);
+  const Rn = a / Math.sqrt(1 - e2 * sp * sp), Rm = (a * (1 - e2)) / Math.pow(1 - e2 * sp * sp, 1.5);
+  const dp = (-dX * sp * cl - dY * sp * sl + dZ * cp + (da * (Rn * e2 * sp * cp)) / a + df * ((Rm * a) / (a * (1 - f)) + (Rn * (a * (1 - f))) / a) * sp * cp) / Rm;
+  const dl = (-dX * sl + dY * cl) / (Rn * cp);
+  return { lat: lat + dp / d, lng: lng + dl / d };
+}
+/** 格子線の交点の緯度経度(日本測地系)を、地図に重ねるための世界測地系にする */
+const toMap = (lat, lng) => tokyoToJGD(lat, lng);
+// 取り込み済みの地図をこの補正に切り替えたかの目印(app.js が使う)
+export const DATUM_VERSION = 'tokyo-v1';
+
 /** 格子線の位置から、交点ごとの「画像の位置 ↔ 緯度経度」の組を作る。k は画像を縮めた倍率 */
 export function gridPairs({ VX, HY, angV, angH, ref }, k = 1) {
   const [code, ci, rj] = ref;
@@ -55,7 +77,7 @@ export function gridPairs({ VX, HY, angV, angH, ref }, k = 1) {
   VX.forEach((x0, i) => HY.forEach((y0, j) => {
     // 縦線 x = x0 + y*tv と 横線 y = y0 - x*th の交点
     const y = (y0 - x0 * th) / (1 + tv * th), x = x0 + y * tv;
-    pairs.push({ u: x * k, v: y * k, lat: sw.lat + ((rj - j) * 2.5) / 60, lng: sw.lng + ((i - ci) * 3.75) / 60 });
+    pairs.push({ u: x * k, v: y * k, ...toMap(sw.lat + ((rj - j) * 2.5) / 60, sw.lng + ((i - ci) * 3.75) / 60) });
   }));
   return pairs;
 }
@@ -155,7 +177,7 @@ export function refineGrid(canvas, sheet, k) {
   const pairs = [];
   for (const { x: x0, i } of VX) for (const { y: y0, j } of HY) {
     const y = (y0 - x0 * th) / (1 + tv * th), x = x0 + y * tv;
-    pairs.push({ u: x, v: y, lat: sw.lat + ((sheet.ref[2] - j) * 2.5) / 60, lng: sw.lng + ((i - sheet.ref[1]) * 3.75) / 60 });
+    pairs.push({ u: x, v: y, ...toMap(sw.lat + ((sheet.ref[2] - j) * 2.5) / 60, sw.lng + ((i - sheet.ref[1]) * 3.75) / 60) });
   }
   return { pairs, found: [VX.length, HY.length], expected: [sheet.VX.length, sheet.HY.length] };
 }
