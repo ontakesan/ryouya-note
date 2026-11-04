@@ -10,15 +10,27 @@ fail() { printf '\n\033[1;31m✕ %s\033[0m\n' "$1"; exit 1; }
 
 step "必要なものを確認"
 command -v node >/dev/null || fail "Node.js が入っていません。https://nodejs.org/ja から LTS 版(22以上)を入れてください。"
-NODE_MAJOR=$(node -p 'process.versions.node.split(".")[0]')
-[ "$NODE_MAJOR" -ge 22 ] || fail "Node.js が古いです(いま $(node -v))。22 以上を入れてください。"
+# 2026年10月21日のセキュリティ修正が入った版(22.23.4 / 24.22.1 / 26.12.1)以上を求める
+node -e '
+  const [a,b,c] = process.versions.node.split(".").map(Number);
+  const min = { 22: [23, 4], 24: [22, 1], 26: [12, 1] }[a];
+  const ok = a > 26 || (min && (b > min[0] || (b === min[0] && c >= min[1])));
+  process.exit(ok ? 0 : 1);
+' || fail "Node.js が古いか、セキュリティ修正前の版です(いま $(node -v))。https://nodejs.org/ja から最新の LTS 版を入れてください。"
 command -v xcodebuild >/dev/null || fail "Xcode が入っていません。App Store から Xcode を入れてください。"
 XCODE_MAJOR=$(xcodebuild -version | head -1 | sed -E 's/Xcode ([0-9]+).*/\1/')
 [ "$XCODE_MAJOR" -ge 26 ] || fail "Xcode が古いです(いま $(xcodebuild -version | head -1))。26 以上に更新してください。"
 echo "Node $(node -v) / $(xcodebuild -version | head -1)"
 
-step "部品をインストール"
-npm install --no-audit --no-fund
+step "部品をインストール(公開から14日以上たった版だけ・インストール時のプログラム実行なし)"
+# 乗っ取られた部品は公開直後に見つかって取り下げられることが多いので、出たばかりの版は避ける
+BEFORE=$(node -e 'console.log(new Date(Date.now() - 14 * 864e5).toISOString().slice(0, 10))')
+if [ -f package-lock.json ]; then
+  npm ci            # 前回と同じ版をそのまま入れる
+else
+  npm install --before="$BEFORE"
+fi
+npm audit --omit=dev --audit-level=high || echo "(上の警告を確認してください。アプリ本体には届かない開発用の部品の警告なら、動作には影響しません)"
 
 step "アプリ用のファイルを組み立て"
 npm run build
@@ -29,7 +41,7 @@ if [ ! -d ios ]; then
 fi
 
 step "アイコンを作成"
-npx --yes @capacitor/assets generate --ios --iconBackgroundColor '#1f2a1f' --splashBackgroundColor '#1f2a1f' || echo "(アイコン作成はスキップしました。動作には影響しません)"
+npx --no-install capacitor-assets generate --ios --iconBackgroundColor '#1f2a1f' --splashBackgroundColor '#1f2a1f' || echo "(アイコン作成はスキップしました。動作には影響しません)"
 
 step "アプリに最新のファイルを反映"
 npx cap sync ios

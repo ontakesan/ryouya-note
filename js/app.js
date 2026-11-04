@@ -629,7 +629,7 @@ async function startDownload() {
 }
 function drawAreas() {
   areaLayer.clearLayers();
-  for (const a of S.areas) L.rectangle([[a.bounds.s, a.bounds.w], [a.bounds.n, a.bounds.e]], { color: '#2b6cb0', weight: 2, fill: false, dashArray: '4 4' }).bindTooltip(a.name).addTo(areaLayer);
+  for (const a of S.areas) L.rectangle([[a.bounds.s, a.bounds.w], [a.bounds.n, a.bounds.e]], { color: '#2b6cb0', weight: 2, fill: false, dashArray: '4 4' }).bindTooltip(esc(a.name)).addTo(areaLayer);
 }
 drawAreas();
 
