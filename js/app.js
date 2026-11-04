@@ -19,6 +19,7 @@ const TYPES = {
   ashi:   { name: '足跡',     short: '足', color: '#2f7d4a' },
   fun:    { name: '糞',       short: '糞', color: '#7a6a2a' },
   nuta:   { name: 'ヌタ場',   short: 'ヌ', color: '#3a7090' },
+  mizuba: { name: '水場',     short: '水', color: '#1f9bd1' },
   kemono: { name: '獣道',     short: '道', color: '#6b7a3a' },
   catch:  { name: '捕獲',     short: '獲', color: '#c0392b' },
 };
