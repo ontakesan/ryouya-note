@@ -21,6 +21,14 @@ const TYPES = {
   nuta:   { name: 'ヌタ場',   short: 'ヌ', color: '#3a7090' },
   mizuba: { name: '水場',     short: '水', color: '#1f9bd1' },
   kemono: { name: '獣道',     short: '道', color: '#6b7a3a' },
+  // 目撃したときのスタンプ。押すと対象獣も自動でその動物になる
+  inoshishi:  { name: '猪',         short: '猪', color: '#6d4c41', animal: 'イノシシ' },
+  shika:      { name: '鹿',         short: '鹿', color: '#b9770e', animal: 'ニホンジカ' },
+  anaguma:    { name: '穴熊',       short: '穴', color: '#546e7a', animal: 'アナグマ' },
+  hakubishin: { name: 'ハクビシン', short: 'ハ', color: '#7e57c2', animal: 'ハクビシン' },
+  tori:       { name: '鳥',         short: '鳥', color: '#00897b', animal: '鳥類' },
+  tanuki:     { name: '狸',         short: '狸', color: '#8d6e63', animal: 'タヌキ' },
+  kitsune:    { name: '狐',         short: '狐', color: '#e67e22', animal: 'キツネ' },
   catch:  { name: '捕獲',     short: '獲', color: '#c0392b' },
 };
 const HOUR = 3600e3;
@@ -342,6 +350,7 @@ for (const [k, t] of Object.entries(TYPES)) {
 }
 function setDlgType(k) {
   dlgType = k;
+  if (TYPES[k]?.animal) $('#pinAnimal').value = TYPES[k].animal; // 動物のスタンプなら対象獣も合わせる
   typeBox.querySelectorAll('button').forEach(b => b.setAttribute('aria-checked', String(b.dataset.type === k)));
 }
 typeBox.addEventListener('click', e => { const b = e.target.closest('button[data-type]'); if (b) setDlgType(b.dataset.type); });
@@ -349,7 +358,7 @@ typeBox.addEventListener('click', e => { const b = e.target.closest('button[data
 let lastType = store.get('lastType', 'kukuri');
 let lastAnimal = store.get('lastAnimal', 'イノシシ');
 function newRecord(type, latlng) {
-  const r = { id: uid(), type, lat: +latlng.lat.toFixed(6), lng: +latlng.lng.toFixed(6), animal: lastAnimal, note: '', at: Date.now() };
+  const r = { id: uid(), type, lat: +latlng.lat.toFixed(6), lng: +latlng.lng.toFixed(6), animal: TYPES[type].animal || lastAnimal, note: '', at: Date.now() };
   if (TYPES[type].trap) { r.set = Date.now(); r.checked = Date.now(); }
   return r;
 }
@@ -375,7 +384,7 @@ $('#pinForm').addEventListener('submit', e => {
   r.note = $('#pinNote').value.trim();
   if (TYPES[r.type].trap) { r.set ??= Date.now(); r.checked ??= Date.now(); }
   if (r._new) { delete r._new; S.records.push(r); lastType = r.type; store.set('lastType', lastType); }
-  lastAnimal = r.animal; store.set('lastAnimal', lastAnimal);
+  if (!TYPES[r.type].animal) { lastAnimal = r.animal; store.set('lastAnimal', lastAnimal); }
   saveRecords(); drawRecords(); $('#pinDialog').close(); renderPanel();
   if (!warnRecord(r)) toast(`${TYPES[r.type].name}を保存しました`);
 });

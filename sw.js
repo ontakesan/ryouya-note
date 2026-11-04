@@ -1,7 +1,7 @@
 // 猟野ノート Service Worker
 // ・アプリ本体: 先に保存し、裏で更新(stale-while-revalidate)
 // ・地理院タイル: 端末にあればそれを使い、無ければ取りに行って閲覧キャッシュに入れる
-const VERSION = 'v2.1.1';
+const VERSION = 'v2.2.0';
 const SHELL = `app-shell-${VERSION}`;
 // 地図の保存先はB版のときの名前のまま(保存済みの地図を引き継ぐため)
 const BROWSE = 'b-tiles-browse-v1';
