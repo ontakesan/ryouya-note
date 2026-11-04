@@ -37,7 +37,8 @@ html = html
   .replace(/https:\/\/unpkg\.com\/leaflet@[\d.]+\/dist\/leaflet\.css/g, 'vendor/leaflet/leaflet.css')
   .replace(/https:\/\/unpkg\.com\/leaflet@[\d.]+\/dist\/leaflet\.js/g, 'vendor/leaflet/leaflet.js')
   .replace(/ integrity="sha256-[^"]+"/g, '') // 同梱版は上で照合済み
-  .replace(/ crossorigin=""/g, '');
+  .replace(/ crossorigin=""/g, '')
+  .replace(/ https:\/\/unpkg\.com/g, ''); // アプリ版は外部から読まないので、読み込み先の制限からも外す
 if (html === before || html.includes('unpkg.com')) { console.error('index.html の Leaflet の読み込みを置き換えられませんでした'); process.exit(1); }
 writeFileSync(htmlPath, html);
 console.log('www/ を作りました(Leaflet 同梱、Service Worker なし)');

@@ -4,7 +4,9 @@
   "private": true,
   "description": "猟野ノート: 熊本県の猟場向けの狩猟用地図アプリ(PWA と iPhone アプリ)",
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "node scripts/build-web.mjs",
     "ios:setup": "bash scripts/ios-setup.sh",
@@ -21,7 +23,6 @@
     "leaflet": "1.9.4"
   },
   "devDependencies": {
-    "@capacitor/assets": "^3.0.5",
     "@capacitor/cli": "^8.0.0"
   }
 }

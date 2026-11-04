@@ -40,8 +40,18 @@ if [ ! -d ios ]; then
   npx cap add ios
 fi
 
-step "アイコンを作成"
-npx --no-install capacitor-assets generate --ios --iconBackgroundColor '#1f2a1f' --splashBackgroundColor '#1f2a1f' || echo "(アイコン作成はスキップしました。動作には影響しません)"
+step "アイコンと起動画面を設定"
+# 外部の道具を使わず、Mac 標準の sips で既存の画像と同じ大きさに縮めて差し替える
+fit() { # $1=元画像 $2=差し替えるフォルダ
+  for f in "$2"/*.png; do
+    [ -e "$f" ] || continue
+    w=$(sips -g pixelWidth "$f" | awk '/pixelWidth/{print $2}')
+    h=$(sips -g pixelHeight "$f" | awk '/pixelHeight/{print $2}')
+    sips -z "$h" "$w" "$1" --out "$f" >/dev/null
+  done
+}
+fit assets/icon.png ios/App/App/Assets.xcassets/AppIcon.appiconset || echo "(アイコンは既定のままです)"
+fit assets/splash.png ios/App/App/Assets.xcassets/Splash.imageset || echo "(起動画面は既定のままです)"
 
 step "アプリに最新のファイルを反映"
 npx cap sync ios
