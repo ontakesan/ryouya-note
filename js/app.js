@@ -29,6 +29,7 @@ const TYPES = {
   tori:       { name: '鳥',         short: '鳥', color: '#00897b', animal: '鳥類' },
   tanuki:     { name: '狸',         short: '狸', color: '#8d6e63', animal: 'タヌキ' },
   kitsune:    { name: '狐',         short: '狐', color: '#e67e22', animal: 'キツネ' },
+  gps:    { name: 'GPS',      short: 'G',  color: '#2b6cb0' },
   catch:  { name: '捕獲',     short: '獲', color: '#c0392b' },
 };
 const HOUR = 3600e3;
