@@ -28,10 +28,12 @@ if xcode-select -p 2>/dev/null | grep -q CommandLineTools; then
     fail "Xcode 本体が入っていません。App Store から Xcode を入れて一度起動し、追加部品のインストールを済ませてから、もう一度実行してください。"
   fi
 fi
-xcodebuild -version >/dev/null 2>&1 || fail "Xcode が使える状態になっていません。Xcode を一度起動して追加部品を入れ、ターミナルで「sudo xcodebuild -license accept」を実行してから、もう一度実行してください。"
-XCODE_MAJOR=$(xcodebuild -version | head -1 | sed -E 's/Xcode ([0-9]+).*/\1/')
-[ "$XCODE_MAJOR" -ge 26 ] || fail "Xcode が古いです(いま $(xcodebuild -version | head -1))。26 以上に更新してください。"
-echo "Node $(node -v) / $(xcodebuild -version | head -1)"
+# 出力を最後まで受け取ってから読む(途中で読むのをやめると xcodebuild が異常終了することがある)
+XV=$(xcodebuild -version 2>/dev/null) || fail "Xcode が使える状態になっていません。Xcode を一度起動して追加部品を入れ、ターミナルで「sudo xcodebuild -license accept」を実行してから、もう一度実行してください。"
+XV1=$(printf '%s\n' "$XV" | sed -n 1p)
+XCODE_MAJOR=$(printf '%s\n' "$XV1" | sed -E 's/Xcode ([0-9]+).*/\1/')
+[ "$XCODE_MAJOR" -ge 26 ] 2>/dev/null || fail "Xcode が古いです(いま $XV1)。26 以上に更新してください。"
+echo "Node $(node -v) / $XV1"
 
 step "部品をインストール(公開から7日以上たった版だけ・インストール時のプログラム実行なし)"
 # 乗っ取られた部品はふつう数時間〜数日で見つかって取り下げられるので、出たばかりの版は避ける
