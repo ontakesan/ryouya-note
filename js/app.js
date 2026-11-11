@@ -703,7 +703,7 @@ async function sheetUrl(sh) {
   sheetLayers.set(sh.id, { ...(sheetLayers.get(sh.id) || {}), url });
   return url;
 }
-const MAX_SHOWN = 3; // 大きな画像を一度に重ねすぎるとスマホで落ちるので、画面に近い順に3枚まで
+const MAX_SHOWN = isNative ? 2 : 3; // 大きな画像を一度に重ねすぎるとスマホのメモリが足りなくなるので、画面に近い順に
 // 画像の読み込みを待つ間に次の呼び出しが来ると、同じ地図が二重に重なり、
 // 片方が「隠す」「透明度」「削除」の対象から外れてしまう。必ず1回ずつ順番に描き直す
 let sheetsRunning = null, sheetsAgain = false;

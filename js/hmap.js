@@ -71,34 +71,50 @@ export function bboxOf(M, w, h) {
   return [Math.min(...ll.map(p => p.lat)), Math.min(...ll.map(p => p.lng)), Math.max(...ll.map(p => p.lat)), Math.max(...ll.map(p => p.lng))];
 }
 
-/** 位置合わせ済みの画像を地図に重ねるレイヤー */
+/**
+ * 位置合わせ済みの画像を地図に重ねるレイヤー。
+ * 画像1枚を丸ごと拡大すると、拡大するほど巨大な画像を描き直すことになり重いので、
+ * 地図と同じ 256px の区画に分け、画面に見えている区画だけを canvas に描く
+ */
 export function geoImageLayer(url, w, h, M, opacity = 0.6) {
-  const Layer = L.Layer.extend({
+  let bmpP = null;
+  const bitmap = () => (bmpP ??= fetch(url).then(r => r.blob()).then(b => createImageBitmap(b)));
+  const bb = bboxOf(M, w, h);
+  const Layer = L.GridLayer.extend({
     onAdd(map) {
-      this._map = map;
       if (!map.getPane('hmap')) {
         const p = map.createPane('hmap');
         p.style.zIndex = 350; // 地図の上、記録やGPSの下
         p.style.pointerEvents = 'none';
       }
-      const img = (this._img = L.DomUtil.create('img', 'geoimg leaflet-zoom-hide', map.getPane('hmap')));
-      img.src = url; img.width = w; img.height = h; img.alt = '';
-      img.style.opacity = opacity;
-      map.on('zoomend viewreset', this._update, this);
-      this._update();
+      L.GridLayer.prototype.onAdd.call(this, map);
     },
     onRemove(map) {
-      this._img.remove();
-      map.off('zoomend viewreset', this._update, this);
+      L.GridLayer.prototype.onRemove.call(this, map);
+      // 画像を展開したメモリを返す(また表示するときに読み直す)
+      bmpP?.then(b => b.close?.()).catch(() => {});
+      bmpP = null;
     },
-    setOpacity(o) { opacity = o; if (this._img) this._img.style.opacity = o; },
-    _update() {
-      const map = this._map, s = 2 ** (map.getZoom() - Z0), o = map.getPixelOrigin();
-      const [a, b, c, d, e, f] = M;
-      this._img.style.transform = `matrix(${a * s},${b * s},${c * s},${d * s},${e * s - o.x},${f * s - o.y})`;
+    createTile(coords, done) {
+      const size = this.getTileSize();
+      const c = document.createElement('canvas');
+      c.width = size.x; c.height = size.y;
+      bitmap().then(bmp => {
+        const g = c.getContext('2d');
+        const s = 2 ** (coords.z - Z0), [a, b, cc, d, e, f] = M;
+        g.imageSmoothingQuality = s < 1 ? 'medium' : 'low';
+        g.setTransform(a * s, b * s, cc * s, d * s, e * s - coords.x * size.x, f * s - coords.y * size.y);
+        g.drawImage(bmp, 0, 0);
+        done(null, c);
+      }).catch(err => done(err, c));
+      return c;
     },
   });
-  return new Layer();
+  return new Layer({
+    pane: 'hmap', opacity, tileSize: 256, maxZoom: 18, keepBuffer: 1,
+    updateWhenZooming: false, // 指で拡大している最中は描き直さない
+    bounds: L.latLngBounds([bb[0], bb[1]], [bb[2], bb[3]]), // 画像の外の区画は作らない
+  });
 }
 
 /** 取り込んだ画像を、スマホで扱える大きさ(長辺4000px)に縮めて JPEG にする */

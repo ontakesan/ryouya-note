@@ -28,6 +28,16 @@ function req(store, mode, fn) {
   }));
 }
 
+// 保存した範囲の地図(offline)に入っているURLの一覧。起動時に一度だけ読み、
+// 地図の画像ごとに保存庫を調べなくて済むようにする
+let offlineKeys = null;
+function loadOfflineKeys() {
+  return req(OFFLINE, 'readonly', s => s.getAllKeys())
+    .then(keys => { offlineKeys = new Set(keys); })
+    .catch(() => { offlineKeys = new Set(); });
+}
+if (isNative) loadOfflineKeys();
+
 export const tileStore = {
   async get(url) {
     const off = await req(OFFLINE, 'readonly', s => s.get(url));
@@ -36,8 +46,8 @@ export const tileStore = {
     return b?.blob || null;
   },
   hasOffline: url => req(OFFLINE, 'readonly', s => s.count(url)).then(n => n > 0),
-  putOffline: (url, blob) => req(OFFLINE, 'readwrite', s => s.put(blob, url)),
-  delOffline: url => req(OFFLINE, 'readwrite', s => s.delete(url)),
+  putOffline: (url, blob) => req(OFFLINE, 'readwrite', s => s.put(blob, url)).then(() => offlineKeys?.add(url)),
+  delOffline: url => req(OFFLINE, 'readwrite', s => s.delete(url)).then(() => offlineKeys?.delete(url)),
   async putBrowse(url, blob) {
     await req(BROWSE, 'readwrite', s => s.put({ blob, t: Date.now() }, url));
     if (++puts % 100 === 0) trimBrowse();
@@ -92,7 +102,11 @@ export async function getTileBlob(url) {
   return blob;
 }
 
-/** アプリ版で使う Leaflet のタイルレイヤー(端末の保存分から表示する) */
+/**
+ * アプリ版で使う Leaflet のタイルレイヤー。
+ * ふだんは iPhone の画像読み込みにそのまま任せる(速い)。
+ * 保存した範囲の画像と、圏外などで読めなかった画像だけ、端末の保存庫から出す
+ */
 export function cachedTileLayer(url, opts) {
   if (!isNative) return L.tileLayer(url, opts);
   const Layer = L.TileLayer.extend({
@@ -100,13 +114,18 @@ export function cachedTileLayer(url, opts) {
       const img = document.createElement('img');
       img.alt = '';
       img.setAttribute('role', 'presentation');
-      getTileBlob(this.getTileUrl(coords)).then(blob => {
+      const src = this.getTileUrl(coords);
+      const fromStore = () => tileStore.get(src).then(blob => {
         if (!blob) { done(new Error('no tile'), img); return; }
-        const src = URL.createObjectURL(blob);
-        img.onload = () => { URL.revokeObjectURL(src); done(null, img); };
-        img.onerror = () => { URL.revokeObjectURL(src); done(new Error('bad tile'), img); };
-        img.src = src;
+        const obj = URL.createObjectURL(blob);
+        img.onload = () => { URL.revokeObjectURL(obj); done(null, img); };
+        img.onerror = () => { URL.revokeObjectURL(obj); done(new Error('bad tile'), img); };
+        img.src = obj;
       }).catch(err => done(err, img));
+      if (offlineKeys?.has(src)) { fromStore(); return img; }
+      img.onload = () => done(null, img);
+      img.onerror = () => { img.onload = img.onerror = null; fromStore(); };
+      img.src = src;
       return img;
     },
   });
