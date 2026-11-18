@@ -21,15 +21,19 @@ const TYPES = {
   nuta:   { name: 'ヌタ場',   short: 'ヌ', color: '#3a7090' },
   mizuba: { name: '水場',     short: '水', color: '#1f9bd1' },
   kemono: { name: '獣道',     short: '道', color: '#6b7a3a' },
+  rindo:  { name: '林道',     short: '林', color: '#7d6b57' },
   // 目撃したときのスタンプ。押すと対象獣も自動でその動物になる
   inoshishi:  { name: '猪',         short: '猪', color: '#6d4c41', animal: 'イノシシ' },
   shika:      { name: '鹿',         short: '鹿', color: '#b9770e', animal: 'ニホンジカ' },
-  anaguma:    { name: '穴熊',       short: '穴', color: '#546e7a', animal: 'アナグマ' },
-  hakubishin: { name: 'ハクビシン', short: 'ハ', color: '#7e57c2', animal: 'ハクビシン' },
+  chugata:    { name: '中型動物',   short: '中', color: '#7e57c2', animal: '中型動物' },
   tori:       { name: '鳥',         short: '鳥', color: '#00897b', animal: '鳥類' },
-  tanuki:     { name: '狸',         short: '狸', color: '#8d6e63', animal: 'タヌキ' },
-  kitsune:    { name: '狐',         short: '狐', color: '#e67e22', animal: 'キツネ' },
+  // 以前のスタンプ。列からは外したが、すでに置いたピンを表示するために残す
+  anaguma:    { name: '穴熊',       short: '穴', color: '#546e7a', animal: 'アナグマ', hidden: true },
+  hakubishin: { name: 'ハクビシン', short: 'ハ', color: '#7e57c2', animal: 'ハクビシン', hidden: true },
+  tanuki:     { name: '狸',         short: '狸', color: '#8d6e63', animal: 'タヌキ', hidden: true },
+  kitsune:    { name: '狐',         short: '狐', color: '#e67e22', animal: 'キツネ', hidden: true },
   gps:    { name: 'GPS',      short: 'G',  color: '#2b6cb0' },
+  chui:   { name: '！',       short: '!',  color: '#d81b60' },
   catch:  { name: '捕獲',     short: '獲', color: '#c0392b' },
 };
 const HOUR = 3600e3;
@@ -346,11 +350,17 @@ function drawRecords() {
 const typeBox = $('#pinTypes');
 let dlgType = 'kukuri';
 for (const [k, t] of Object.entries(TYPES)) {
+  if (t.hidden) continue;
   typeBox.insertAdjacentHTML('beforeend',
     `<button type="button" role="radio" aria-checked="false" data-type="${k}"><i style="background:${t.color}"></i>${t.name}</button>`);
 }
 function setDlgType(k) {
   dlgType = k;
+  typeBox.querySelectorAll('button[data-legacy]').forEach(b => { if (b.dataset.type !== k) b.remove(); });
+  if (TYPES[k]?.hidden && !typeBox.querySelector(`button[data-type="${k}"]`)) {
+    typeBox.insertAdjacentHTML('beforeend',
+      `<button type="button" role="radio" aria-checked="false" data-type="${k}" data-legacy="1"><i style="background:${TYPES[k].color}"></i>${TYPES[k].name}</button>`);
+  }
   if (TYPES[k]?.animal) $('#pinAnimal').value = TYPES[k].animal; // 動物のスタンプなら対象獣も合わせる
   typeBox.querySelectorAll('button').forEach(b => b.setAttribute('aria-checked', String(b.dataset.type === k)));
 }
@@ -369,7 +379,10 @@ function openPin(rec, latlng) {
   const r = S.editing;
   $('#pinTitle').textContent = isNew ? '地点を記録' : TYPES[r.type].name;
   setDlgType(r.type);
-  $('#pinAnimal').value = r.animal;
+  const sel = $('#pinAnimal');
+  sel.querySelectorAll('option[data-legacy]').forEach(o => o.remove());
+  if (![...sel.options].some(o => o.value === r.animal)) sel.insertAdjacentHTML('beforeend', `<option data-legacy="1">${esc(r.animal)}</option>`);
+  sel.value = r.animal;
   $('#pinNote').value = r.note || '';
   $('#pinDelete').hidden = isNew;
   const meta = $('#pinMeta');
@@ -401,6 +414,7 @@ $('#pinDialog').addEventListener('close', () => { const b = $('#pinDelete'); b.d
 /* スタンプ: 上の列から選び、地図をタップするとその場に置く(もう一度押すと解除) */
 const stampBar = $('#stampBar');
 for (const [k, t] of Object.entries(TYPES)) {
+  if (t.hidden) continue;
   stampBar.insertAdjacentHTML('beforeend',
     `<button class="stamp" data-stamp="${k}" aria-pressed="false"><i style="background:${t.color}"></i>${t.name}</button>`);
 }
